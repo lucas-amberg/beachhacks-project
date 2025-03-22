@@ -3,11 +3,46 @@ import OpenAI from "openai";
 import { createClient } from "@supabase/supabase-js";
 import { getTextFromPDF } from "../../../app/lib/extractText";
 import { createQuizResponseSchemaWithCount } from "@/lib/schemas";
+import { zodResponseFormat } from "openai/helpers/zod";
+import { z } from "zod";
 
 // Initialize OpenAI client
 const openai = new OpenAI({
     apiKey: process.env.OPENAI_API_KEY,
 });
+
+// Define a schema specifically for the OpenAI response
+const QuizQuestionResponseSchema = z.object({
+    question: z
+        .string()
+        .describe("The question text, should be unique and descriptive"),
+    options: z
+        .array(z.string())
+        .describe("Array of 4 possible answers as strings"),
+    answer: z
+        .string()
+        .describe(
+            "The exact text of the correct option (must match one of the options exactly)",
+        ),
+    explanation: z
+        .string()
+        .describe("Brief explanation of why the answer is correct"),
+    category: z
+        .string()
+        .describe("A category or topic that this question belongs to"),
+});
+
+// Create a schema for the array of questions without min/max validation
+const createQuizArraySchema = (count: number) =>
+    z
+        .object({
+            quiz_questions: z
+                .array(QuizQuestionResponseSchema)
+                .describe(
+                    `Multiple-choice quiz questions (should be exactly ${count})`,
+                ),
+        })
+        .describe("Quiz questions response");
 
 // Create a Supabase client for server-side operations
 const supabase = createClient(
@@ -95,6 +130,67 @@ async function findOrCreateCategory(
     }
 }
 
+/**
+ * Check if two strings are too similar based on character overlap
+ */
+function areTooSimilar(str1: string, str2: string): boolean {
+    // Convert to lowercase and trim whitespace for better comparison
+    const a = str1.toLowerCase().trim();
+    const b = str2.toLowerCase().trim();
+
+    // If the strings are very short, be more strict
+    if (a.length < 10 || b.length < 10) {
+        return a === b || a.includes(b) || b.includes(a);
+    }
+
+    // Calculate similarity using Levenshtein distance
+    const maxLength = Math.max(a.length, b.length);
+    if (maxLength === 0) return true;
+
+    // Simple version of similarity check
+    let sameChars = 0;
+    for (let i = 0; i < Math.min(a.length, b.length); i++) {
+        if (a[i] === b[i]) sameChars++;
+    }
+
+    const similarityRatio = sameChars / maxLength;
+
+    // If more than 70% similar, consider them too similar
+    return similarityRatio > 0.7;
+}
+
+/**
+ * Generate an alternative incorrect option related to the topic
+ */
+function generateAlternativeOption(
+    question: string,
+    existingOptions: string[],
+    topicHint: string,
+): string {
+    // Create some alternatives based on the question
+    const options = [
+        `A different aspect of ${topicHint}`,
+        `Unrelated concept to ${topicHint}`,
+        `Opposite of the correct answer`,
+        `Common misconception about ${topicHint}`,
+    ];
+
+    // Select one that doesn't match existing options
+    for (const option of options) {
+        let isSimilar = false;
+        for (const existing of existingOptions) {
+            if (areTooSimilar(option, existing)) {
+                isSimilar = true;
+                break;
+            }
+        }
+        if (!isSimilar) return option;
+    }
+
+    // If all are similar, add a number to make it unique
+    return `Alternative ${existingOptions.length + 1}: ${topicHint}`;
+}
+
 export async function POST(request: Request) {
     // Add timeout to avoid API hanging
     const timeout = setTimeout(() => {
@@ -146,37 +242,55 @@ export async function POST(request: Request) {
                 // Use Vision API for PDF files when URL is available
                 try {
                     console.log("Calling Vision API...");
-                    const response = await openai.chat.completions.create({
+
+                    // Create a schema for validation
+                    const schema = createQuizArraySchema(numQuestions);
+
+                    const response = await openai.beta.chat.completions.parse({
                         model: "gpt-4-vision-preview",
                         messages: [
                             {
                                 role: "system",
                                 content: `You are a helpful assistant that creates educational quiz questions based on document content.
                 Carefully analyze the CONTENT of the document (not its format or metadata).
-                Create EXACTLY ${numQuestions} multiple-choice questions with 4 options each. 
-                The number of questions (${numQuestions}) is a strict requirement - you MUST create exactly that many questions.
-                Each question should test comprehension of the actual content/information in the document.
-                Make sure only one option is correct.
-                Ensure questions cover different topics from the document.
                 
-                Format output as a valid JSON array with objects having these fields:
-                - question (string): The question text about the content
-                - options (array): Four possible answers as strings
-                - answer (string): The exact text of the correct option (must match one of the options EXACTLY)
-                - explanation (string): Brief explanation of why the answer is correct
-                - category (string): A category or topic that this question belongs to
+                *** CRITICAL INSTRUCTION: Create EXACTLY ${numQuestions} multiple-choice questions. No more, no less. ***
                 
-                IMPORTANT: 
-                1. The "answer" field MUST contain the EXACT same text as one of the options.
-                2. You MUST create EXACTLY ${numQuestions} questions - not more, not less.
-                3. Do NOT create questions about the file format, encoding, or metadata.`,
+                Each question should:
+                - Be unique and test different aspects of the content
+                - Have exactly 4 answer options that are CLEARLY DISTINCT from each other
+                - Have ONLY ONE clearly correct answer - the other 3 should be clearly incorrect
+                - Ensure incorrect options are plausible but definitively wrong
+                - Be based on actual information in the document
+                
+                Format each question with these fields:
+                - question: The question text
+                - options: Array of 4 possible answers (MUST be substantially different from each other)
+                - answer: The EXACT text of the correct option (must match one of the options exactly)
+                - explanation: Brief explanation of why the answer is correct AND why the other options are incorrect
+                - category: A topic category this question belongs to
+                
+                DO NOT create duplicate questions or slight variations of the same question.
+                DO NOT create options that could all be partially correct or similar to each other.
+                DO NOT include multiple correct answers or options that are variations of the same answer.
+                
+                Your response must be a JSON object with a 'quiz_questions' array containing EXACTLY ${numQuestions} questions.`,
                             },
                             {
                                 role: "user",
                                 content: [
                                     {
                                         type: "text",
-                                        text: `Please analyze this document and create EXACTLY ${numQuestions} multiple-choice quiz questions about its actual content. This is a strict requirement - you must create exactly ${numQuestions} questions. Include a category for each question. Don't reference the file format, focus only on the document's information. Make sure the "answer" field contains the EXACT text of the correct option.`,
+                                        text: `Analyze this document and create EXACTLY ${numQuestions} unique multiple-choice questions about its content. 
+                                        
+This is a strict requirement - I need exactly ${numQuestions} questions, no more and no less.
+
+Each question should have 4 answer options that are clearly different from each other, with ONLY ONE correct answer.
+Make sure the 'answer' field contains the exact text of the correct option.
+The incorrect options should be clearly wrong but plausible enough to be challenging.
+DO NOT create options that are all partially correct or just variations of the same answer.
+
+Focus only on the document's actual content - don't reference the file format or metadata.`,
                                     },
                                     {
                                         type: "image_url",
@@ -186,121 +300,103 @@ export async function POST(request: Request) {
                             },
                         ],
                         max_tokens: 4000,
+                        response_format: zodResponseFormat(
+                            schema,
+                            "quiz_questions",
+                        ),
                     });
 
                     console.log(
                         "Vision API response received, length:",
                         response.choices[0]?.message?.content?.length || 0,
                     );
+
                     const responseText =
-                        response.choices[0]?.message?.content || "";
+                        response.choices[0]?.message?.content || "{}";
+                    let questions = [];
 
-                    // Extract the JSON part from the response
-                    const jsonMatch = responseText.match(
-                        /\[\s*\{(.|\n)*\}\s*\]/,
-                    );
-                    if (jsonMatch) {
-                        try {
-                            console.log("Parsing Vision API JSON response...");
-                            const parsedData = JSON.parse(jsonMatch[0]);
+                    try {
+                        const parsedResponse = JSON.parse(responseText);
 
-                            // Handle different formats of data
-                            let questionsToProcess;
-                            if (Array.isArray(parsedData)) {
-                                questionsToProcess = parsedData;
-                                // Wrap in questions object for validation
-                                const questionsObj = {
-                                    questions: questionsToProcess,
-                                };
+                        // With the updated schema, we should always have a quiz_questions array property
+                        if (
+                            parsedResponse.quiz_questions &&
+                            Array.isArray(parsedResponse.quiz_questions)
+                        ) {
+                            questions = parsedResponse.quiz_questions;
+                            console.log(
+                                "Vision response has quiz_questions array with",
+                                questions.length,
+                                "questions",
+                            );
+                        }
+                        // Handle direct array for backward compatibility
+                        else if (Array.isArray(parsedResponse)) {
+                            questions = parsedResponse;
+                            console.log(
+                                "Vision response is a direct array with",
+                                questions.length,
+                                "questions",
+                            );
+                        }
+                        // Handle 'questions' property for backward compatibility
+                        else if (
+                            parsedResponse.questions &&
+                            Array.isArray(parsedResponse.questions)
+                        ) {
+                            questions = parsedResponse.questions;
+                            console.log(
+                                "Vision response has questions array with",
+                                questions.length,
+                                "questions",
+                            );
+                        } else {
+                            console.error(
+                                "Invalid Vision API response format:",
+                                parsedResponse,
+                            );
+                            questions = [];
+                        }
 
-                                // Validate against our schema to ensure minimum question count
-                                const validationResult =
-                                    responseValidator.safeParse(questionsObj);
-                                if (!validationResult.success) {
-                                    console.error(
-                                        "Vision API response validation failed:",
-                                        validationResult.error,
-                                    );
-                                    throw new Error(
-                                        `Not enough questions generated. Required: ${numQuestions}, Got: ${questionsToProcess.length}`,
-                                    );
-                                }
-                            } else if (
-                                parsedData.questions &&
-                                Array.isArray(parsedData.questions)
-                            ) {
-                                questionsToProcess = parsedData.questions;
-
-                                // Validate against our schema to ensure minimum question count
-                                const validationResult =
-                                    responseValidator.safeParse(parsedData);
-                                if (!validationResult.success) {
-                                    console.error(
-                                        "Vision API response validation failed:",
-                                        validationResult.error,
-                                    );
-                                    throw new Error(
-                                        `Not enough questions generated. Required: ${numQuestions}, Got: ${questionsToProcess.length}`,
-                                    );
-                                }
-                            } else if (
-                                Object.keys(parsedData).includes("question") &&
-                                Object.keys(parsedData).includes("options") &&
-                                (parsedData.answer || parsedData.correct_answer)
-                            ) {
-                                // This is a single question object
-                                questionsToProcess = [parsedData];
-                                console.error(
-                                    "Only a single question was generated, but needed",
-                                    numQuestions,
+                        // Check if we have enough questions regardless of schema validation
+                        if (Array.isArray(questions)) {
+                            if (questions.length === numQuestions) {
+                                console.log(
+                                    `Perfect! Got exactly ${questions.length} questions from Vision API as requested.`,
                                 );
-                                throw new Error(
-                                    `Only one question was generated, but ${numQuestions} were requested`,
+                            } else if (questions.length > numQuestions) {
+                                console.log(
+                                    `Got ${questions.length} questions from Vision API, trimming to ${numQuestions} as requested.`,
+                                );
+                                questions = questions.slice(0, numQuestions);
+                            } else if (questions.length > 0) {
+                                console.warn(
+                                    `Only got ${questions.length}/${numQuestions} questions from Vision API, will use what we have.`,
                                 );
                             } else {
                                 console.error(
-                                    "Invalid Vision API response format:",
-                                    parsedData,
+                                    "No valid questions in the Vision API response.",
                                 );
                                 // Fall back to text extraction
-                                questionsToProcess = [];
+                                return;
                             }
 
-                            // Ensure questions is an array before calling saveQuizQuestions
-                            if (
-                                Array.isArray(questionsToProcess) &&
-                                questionsToProcess.length > 0
-                            ) {
-                                console.log(
-                                    `Saving ${questionsToProcess.length} questions from Vision API...`,
-                                );
-                                await saveQuizQuestions(
-                                    questionsToProcess,
-                                    studySetId,
-                                );
-                                clearTimeout(timeout);
-                                return NextResponse.json({
-                                    success: true,
-                                    message:
-                                        "Quiz generated successfully with Vision API",
-                                    count: questionsToProcess.length,
-                                });
-                            } else {
-                                console.error(
-                                    "No valid questions in Vision API response",
-                                );
-                                // Fall back to text extraction if format is invalid
-                            }
-                        } catch (jsonError) {
-                            console.error(
-                                "Error parsing Vision API JSON:",
-                                jsonError,
+                            console.log(
+                                `Saving ${questions.length} questions from Vision API...`,
                             );
-                            // Fall back to text extraction if JSON parsing fails
+                            await saveQuizQuestions(questions, studySetId);
+                            clearTimeout(timeout);
+                            return NextResponse.json({
+                                success: true,
+                                message:
+                                    "Quiz generated successfully with Vision API",
+                                count: questions.length,
+                            });
                         }
-                    } else {
+                    } catch (jsonError) {
                         console.error(
-                            "No valid JSON found in Vision API response",
+                            "Error parsing Vision API response:",
+                            jsonError,
                         );
                     }
                 } catch (visionError) {
@@ -350,187 +446,199 @@ export async function POST(request: Request) {
                         `Attempt ${attempt}/${maxAttempts} with content length: ${contentToUse.length}`,
                     );
 
-                    const prompt = `
-            Create EXACTLY ${numQuestions} ${questionType} questions based on the following content.
-            This is a STRICT REQUIREMENT - you MUST create exactly ${numQuestions} questions - not more, not less.
-            
-            ${contentToUse} 
-            
-            IMPORTANT:
-            - You MUST generate EXACTLY ${numQuestions} questions as requested by the user.
-            - Focus ONLY on the actual information/content from the document.
-            - DO NOT create questions about the file format, encoding, or metadata.
-            - Each question should test understanding of the content presented in the document.
-            
-            Format your response as a JSON array with objects containing:
-            - question (string): The question text
-            - options (array): Four possible answers as strings
-            - answer (string): The EXACT text of the correct option (must match one of the options EXACTLY, character for character)
-            - explanation (string): Brief explanation of why the answer is correct
-            - category (string): A category or topic that this question belongs to
-            
-            CRITICAL: 
-            1. The "answer" field MUST contain text that EXACTLY matches one of the options.
-            2. You MUST create EXACTLY ${numQuestions} questions - this is a strict requirement.
-          `;
-
                     try {
                         console.log(
                             `Calling text-based GPT API (attempt ${attempt})...`,
                         );
-                        const completion = await openai.chat.completions.create(
-                            {
-                                model: "gpt-4-turbo",
+
+                        // Create a schema for OpenAI response validation
+                        const schema = createQuizArraySchema(numQuestions);
+
+                        const completion =
+                            await openai.beta.chat.completions.parse({
+                                model: "gpt-4o-2024-08-06",
                                 messages: [
                                     {
                                         role: "system",
                                         content: `You are a helpful assistant that creates educational quiz questions based on document content.
-                  Focus on the actual information in the document, not metadata or file format.
                   
-                  IMPORTANT: 
-                  1. Always ensure the 'answer' field contains the EXACT text of the correct option.
-                  2. You MUST create EXACTLY ${numQuestions} questions as requested - not more, not less.
-                  3. This is a strict requirement from the user - generating the correct number of questions is critical.`,
+                  *** CRITICAL INSTRUCTION: Create EXACTLY ${numQuestions} multiple-choice questions. No more, no less. ***
+                  
+                  Each question should:
+                  - Be unique and test different aspects of the content
+                  - Have exactly 4 answer options that are CLEARLY DISTINCT from each other
+                  - Have ONLY ONE clearly correct answer - the other 3 should be clearly incorrect
+                  - Ensure incorrect options are plausible but definitively wrong
+                  - Be based on actual information in the document
+                  
+                  Format each question with these fields:
+                  - question: The question text
+                  - options: Array of 4 possible answers (MUST be substantially different from each other)
+                  - answer: The EXACT text of the correct option (must match one of the options exactly)
+                  - explanation: Brief explanation of why the answer is correct AND why the other options are incorrect
+                  - category: A topic category this question belongs to
+                  
+                  DO NOT create duplicate questions or slight variations of the same question.
+                  DO NOT create options that could all be partially correct or similar to each other.
+                  DO NOT include multiple correct answers or options that are variations of the same answer.
+                  
+                  Your response must be a JSON object with a 'quiz_questions' array containing EXACTLY ${numQuestions} questions.`,
                                     },
                                     {
                                         role: "user",
-                                        content: prompt,
+                                        content: `Create EXACTLY ${numQuestions} unique multiple-choice questions based on this content:
+                  
+                  ${contentToUse}
+                  
+This is a strict requirement - I need exactly ${numQuestions} questions, no more and no less.
+
+Each question should have 4 answer options that are clearly different from each other, with ONLY ONE correct answer.
+Make sure the 'answer' field contains the exact text of the correct option.
+The incorrect options should be clearly wrong but plausible enough to be challenging.
+DO NOT create options that are all partially correct or just variations of the same answer.
+
+Focus only on the document's actual content - don't reference the file format or metadata.`,
                                     },
                                 ],
-                                response_format: { type: "json_object" },
-                            },
-                        );
+                                response_format: zodResponseFormat(
+                                    schema,
+                                    "quiz_questions",
+                                ),
+                            });
 
                         console.log("Text-based API response received");
-                        const responseText =
-                            completion.choices[0]?.message?.content || "";
+
+                        // Parse the JSON content into an array
+                        const responseContent =
+                            completion.choices[0]?.message?.content || "[]";
+                        let questions;
 
                         try {
-                            console.log(
-                                "Parsing text-based API JSON response...",
-                            );
-                            const responseData = JSON.parse(responseText);
+                            const parsedResponse = JSON.parse(responseContent);
 
-                            // Handle both array format and object with questions property
-                            let questionsToProcess;
-                            if (Array.isArray(responseData)) {
-                                questionsToProcess = responseData;
+                            // With the updated schema, we should always have a quiz_questions array property
+                            if (
+                                parsedResponse.quiz_questions &&
+                                Array.isArray(parsedResponse.quiz_questions)
+                            ) {
+                                questions = parsedResponse.quiz_questions;
                                 console.log(
-                                    "Response is an array with",
-                                    questionsToProcess.length,
+                                    "Response has quiz_questions array with",
+                                    questions.length,
                                     "questions",
                                 );
-
-                                // Wrap in questions object for validation
-                                const questionsObj = {
-                                    questions: questionsToProcess,
-                                };
-
-                                // Validate against our schema to ensure minimum question count
-                                const validationResult =
-                                    responseValidator.safeParse(questionsObj);
-                                if (!validationResult.success) {
-                                    console.error(
-                                        "Text API response validation failed:",
-                                        validationResult.error,
-                                    );
-                                    throw new Error(
-                                        `Not enough questions generated. Required: ${numQuestions}, Got: ${questionsToProcess.length}`,
-                                    );
-                                }
-                            } else if (
-                                responseData.questions &&
-                                Array.isArray(responseData.questions)
+                            }
+                            // Handle direct array for backward compatibility
+                            else if (Array.isArray(parsedResponse)) {
+                                questions = parsedResponse;
+                                console.log(
+                                    "Response is a direct array with",
+                                    questions.length,
+                                    "questions",
+                                );
+                            }
+                            // Handle 'questions' property for backward compatibility
+                            else if (
+                                parsedResponse.questions &&
+                                Array.isArray(parsedResponse.questions)
                             ) {
-                                questionsToProcess = responseData.questions;
+                                questions = parsedResponse.questions;
                                 console.log(
                                     "Response has questions array with",
-                                    questionsToProcess.length,
+                                    questions.length,
                                     "questions",
                                 );
-
-                                // Validate against our schema to ensure minimum question count
-                                const validationResult =
-                                    responseValidator.safeParse(responseData);
-                                if (!validationResult.success) {
-                                    console.error(
-                                        "Text API response validation failed:",
-                                        validationResult.error,
-                                    );
-                                    throw new Error(
-                                        `Not enough questions generated. Required: ${numQuestions}, Got: ${questionsToProcess.length}`,
-                                    );
-                                }
-                            } else if (
-                                Object.keys(responseData).includes(
-                                    "question",
-                                ) &&
-                                Object.keys(responseData).includes("options") &&
-                                (responseData.answer ||
-                                    responseData.correct_answer)
-                            ) {
-                                // This is a single question object, not wrapped in an array
-                                questionsToProcess = [responseData];
-                                console.log(
-                                    "Response is a single question object",
-                                );
-                                console.error(
-                                    "Only a single question was generated, but needed",
-                                    numQuestions,
-                                );
-
-                                // If we're on the final attempt, continue with what we have, otherwise retry
-                                if (attempt >= maxAttempts) {
-                                    console.warn(
-                                        "Final attempt - proceeding with single question despite requirement for",
-                                        numQuestions,
-                                    );
-                                } else {
-                                    throw new Error(
-                                        `Only one question was generated, but ${numQuestions} were requested`,
-                                    );
-                                }
                             } else {
                                 console.error(
                                     "Invalid response format:",
-                                    responseData,
+                                    parsedResponse,
                                 );
-                                attempt++;
-                                continue; // Try again with shorter content
+                                questions = [];
                             }
 
-                            // Ensure questions is an array before calling saveQuizQuestions
-                            if (
-                                Array.isArray(questionsToProcess) &&
-                                questionsToProcess.length > 0
-                            ) {
-                                console.log(
-                                    `Saving ${questionsToProcess.length} questions from text-based API...`,
+                            // Validate against our schema
+                            try {
+                                // Create a validation object with the quiz_questions property
+                                const validationObject = {
+                                    quiz_questions: questions,
+                                };
+
+                                const validationResult =
+                                    schema.safeParse(validationObject);
+                                if (validationResult.success) {
+                                    console.log(
+                                        "Questions validated successfully against schema",
+                                    );
+                                } else {
+                                    console.warn(
+                                        "Questions failed schema validation:",
+                                        validationResult.error,
+                                    );
+
+                                    // If not enough questions, continue to next attempt
+                                    if (
+                                        questions.length < numQuestions &&
+                                        attempt < maxAttempts
+                                    ) {
+                                        console.log(
+                                            `Not enough questions (${questions.length}/${numQuestions}), trying again`,
+                                        );
+                                        attempt++;
+                                        continue;
+                                    }
+                                }
+                            } catch (validationError) {
+                                console.error(
+                                    "Error during schema validation:",
+                                    validationError,
                                 );
-                                await saveQuizQuestions(
-                                    questionsToProcess,
-                                    studySetId,
-                                );
-                                clearTimeout(timeout);
-                                return NextResponse.json({
-                                    success: true,
-                                    message: "Quiz generated successfully",
-                                    count: questionsToProcess.length,
-                                });
-                            } else {
-                                console.warn(
-                                    "No valid questions found, trying with shorter content",
-                                );
-                                attempt++;
-                                continue; // Try again with shorter content
                             }
                         } catch (error) {
-                            console.error(
-                                "Error parsing JSON response:",
-                                error,
+                            console.error("Error parsing response:", error);
+                            questions = [];
+                            attempt++;
+                            continue;
+                        }
+
+                        // Check if we have enough questions regardless of schema validation
+                        if (Array.isArray(questions)) {
+                            if (questions.length === numQuestions) {
+                                console.log(
+                                    `Perfect! Got exactly ${questions.length} questions as requested.`,
+                                );
+                            } else if (questions.length > numQuestions) {
+                                console.log(
+                                    `Got ${questions.length} questions, trimming to ${numQuestions} as requested.`,
+                                );
+                                questions = questions.slice(0, numQuestions);
+                            } else if (questions.length > 0) {
+                                console.warn(
+                                    `Only got ${questions.length}/${numQuestions} questions, will use what we have.`,
+                                );
+                            } else {
+                                console.error(
+                                    "No valid questions in the response.",
+                                );
+                                attempt++;
+                                continue;
+                            }
+
+                            console.log(
+                                `Saving ${questions.length} questions...`,
+                            );
+                            await saveQuizQuestions(questions, studySetId);
+                            clearTimeout(timeout);
+                            return NextResponse.json({
+                                success: true,
+                                message: "Quiz generated successfully",
+                                count: questions.length,
+                            });
+                        } else {
+                            console.warn(
+                                `Unexpected response format, questions is not an array.`,
                             );
                             attempt++;
-                            continue; // Try again with shorter content
+                            continue; // Try again
                         }
                     } catch (apiError: any) {
                         console.error(
@@ -606,6 +714,7 @@ async function saveQuizQuestions(questions: any[], studySetId: string) {
 
     console.log(`Starting to save ${questions.length} questions...`);
     let savedCount = 0;
+    const uniqueQuestions = new Set<string>(); // Track unique questions by text
 
     for (const question of questions) {
         try {
@@ -613,6 +722,17 @@ async function saveQuizQuestions(questions: any[], studySetId: string) {
                 console.error("Invalid question format:", question);
                 continue;
             }
+
+            // Skip duplicate questions based on question text
+            if (uniqueQuestions.has(question.question)) {
+                console.warn(
+                    `Skipping duplicate question: "${question.question.substring(0, 30)}..."`,
+                );
+                continue;
+            }
+
+            // Add to set of unique questions
+            uniqueQuestions.add(question.question);
 
             // Process category if it exists
             let categoryName = null;
@@ -648,20 +768,68 @@ async function saveQuizQuestions(questions: any[], studySetId: string) {
                 continue;
             }
 
+            // Validate that we have at least 4 options
+            if (options.length < 4) {
+                console.warn(
+                    `Question "${question.question.substring(0, 30)}..." has only ${options.length} options, adding placeholder options`,
+                );
+                // Add placeholder options if needed
+                while (options.length < 4) {
+                    options.push(`Option ${options.length + 1}`);
+                }
+            }
+
+            // Check for and fix similar options
+            const optionsTooSimilar: boolean[] = Array(options.length).fill(
+                false,
+            );
+            for (let i = 0; i < options.length; i++) {
+                for (let j = i + 1; j < options.length; j++) {
+                    if (areTooSimilar(options[i], options[j])) {
+                        // Mark the later option as too similar
+                        optionsTooSimilar[j] = true;
+                        console.warn(
+                            `Question "${question.question.substring(0, 30)}..." has similar options:`,
+                            { option1: options[i], option2: options[j] },
+                        );
+                    }
+                }
+            }
+
+            // Replace similar options with alternatives
+            for (let i = 0; i < optionsTooSimilar.length; i++) {
+                if (optionsTooSimilar[i]) {
+                    // Generate an alternative option based on question category or text
+                    const topicHint =
+                        question.category ||
+                        question.question.split(" ").slice(0, 3).join(" ");
+                    options[i] = generateAlternativeOption(
+                        question.question,
+                        options.filter((_: string, idx: number) => idx !== i),
+                        topicHint,
+                    );
+                    console.log(
+                        `Replaced similar option with alternative: "${options[i]}"`,
+                    );
+                }
+            }
+
             // Handle correct answer - get the answer text and find its index in options
             let correctAnswerIndex = 0; // Default to first option
+            let correctAnswerText = ""; // The actual text of the correct answer
 
-            // If we have a numeric correct_answer that's within range, use it directly
+            // If we have a numeric answer that's within range, use it as an index
             if (
-                typeof question.correct_answer === "number" &&
-                question.correct_answer >= 0 &&
-                question.correct_answer < options.length
+                typeof question.answer === "number" &&
+                question.answer >= 0 &&
+                question.answer < options.length
             ) {
-                correctAnswerIndex = question.correct_answer;
+                correctAnswerIndex = question.answer;
+                correctAnswerText = options[correctAnswerIndex]; // Get the text at this index
             }
             // Otherwise look for the answer text in the options
             else {
-                const answerText = question.answer || question.correct_answer;
+                const answerText = question.answer || "";
 
                 if (answerText && typeof answerText === "string") {
                     // Find the index of the option that exactly matches the answer text
@@ -671,6 +839,7 @@ async function saveQuizQuestions(questions: any[], studySetId: string) {
 
                     if (answerIndex >= 0) {
                         correctAnswerIndex = answerIndex;
+                        correctAnswerText = options[answerIndex]; // Use the exact text from options
                     } else {
                         // If no exact match, try a case-insensitive comparison
                         const lowercaseAnswer = answerText.toLowerCase().trim();
@@ -681,18 +850,23 @@ async function saveQuizQuestions(questions: any[], studySetId: string) {
 
                         if (lowercaseIndex >= 0) {
                             correctAnswerIndex = lowercaseIndex;
+                            correctAnswerText = options[lowercaseIndex]; // Use the exact text from options
                         } else {
                             console.warn(
                                 "Answer text doesn't match any option exactly. Using first option as default.",
                                 { answer: answerText, options },
                             );
+                            correctAnswerText = options[0]; // Default to first option
                         }
                     }
+                } else {
+                    // Default to first option if no valid answer text
+                    correctAnswerText = options[0];
                 }
             }
 
             console.log(
-                `Saving question: "${question.question.substring(0, 30)}..." with answer index: ${correctAnswerIndex}`,
+                `Saving question: "${question.question.substring(0, 30)}..." with answer: "${correctAnswerText}"`,
             );
 
             try {
@@ -700,7 +874,7 @@ async function saveQuizQuestions(questions: any[], studySetId: string) {
                     study_set: studySetId,
                     question: question.question,
                     options: JSON.stringify(options),
-                    correct_answer: correctAnswerIndex,
+                    answer: correctAnswerText, // Store the answer text, not the index
                     category: categoryName,
                     explanation: question.explanation || "",
                 });

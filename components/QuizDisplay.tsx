@@ -18,10 +18,15 @@ type QuizQuestion = {
     id: number;
     question: string;
     options: string[];
-    correct_answer: number;
+    answer: string;
     category: {
         name: string;
     } | null;
+};
+
+type ScoreState = {
+    correct: number;
+    total: number;
 };
 
 type QuizDisplayProps = {
@@ -34,7 +39,7 @@ export default function QuizDisplay({ studySetId }: QuizDisplayProps) {
     const [currentQuestion, setCurrentQuestion] = useState(0);
     const [selectedOption, setSelectedOption] = useState<number | null>(null);
     const [showAnswer, setShowAnswer] = useState(false);
-    const [score, setScore] = useState({ correct: 0, total: 0 });
+    const [score, setScore] = useState<ScoreState>({ correct: 0, total: 0 });
 
     useEffect(() => {
         fetchQuizQuestions();
@@ -50,7 +55,7 @@ export default function QuizDisplay({ studySetId }: QuizDisplayProps) {
           id, 
           question, 
           options, 
-          correct_answer,
+          answer,
           category
         `,
                 )
@@ -82,35 +87,16 @@ export default function QuizDisplay({ studySetId }: QuizDisplayProps) {
                           ? q.options
                           : [];
 
-                // Ensure correct_answer is a valid number
-                let correctAnswerIndex = 0;
-                if (
-                    typeof q.correct_answer === "number" &&
-                    q.correct_answer >= 0 &&
-                    q.correct_answer < parsedOptions.length
-                ) {
-                    correctAnswerIndex = q.correct_answer;
-                } else if (typeof q.correct_answer === "string") {
-                    // Try to parse string to number
-                    const parsed = parseInt(q.correct_answer, 10);
-                    if (
-                        !isNaN(parsed) &&
-                        parsed >= 0 &&
-                        parsed < parsedOptions.length
-                    ) {
-                        correctAnswerIndex = parsed;
-                    }
-                }
+                // Use the answer field directly, or default to empty string if not provided
+                const answerText = q.answer || "";
 
-                console.log(
-                    `Question ${q.id}: correct_answer = ${correctAnswerIndex}, type = ${typeof q.correct_answer}`,
-                );
+                console.log(`Question ${q.id}: answer = "${answerText}"`);
 
                 return {
                     id: q.id,
                     question: q.question,
                     options: parsedOptions,
-                    correct_answer: correctAnswerIndex,
+                    answer: answerText,
                     category: categoryData,
                 };
             });
@@ -138,24 +124,28 @@ export default function QuizDisplay({ studySetId }: QuizDisplayProps) {
 
         // Get the current question and log values for debugging
         const currentQ = questions[currentQuestion];
+        const selectedAnswerText = currentQ.options[selectedOption];
+
         console.log("Checking answer:", {
             selectedOption,
-            correctAnswer: currentQ.correct_answer,
-            isCorrect: selectedOption === currentQ.correct_answer,
+            selectedAnswerText,
+            correctAnswer: currentQ.answer,
+            isCorrect: selectedAnswerText === currentQ.answer,
         });
 
-        // Only increment correct count if selected option matches the correct answer index
-        if (selectedOption === currentQ.correct_answer) {
+        // Only increment correct count if selected option matches the correct answer text
+        if (selectedAnswerText === currentQ.answer) {
             toast.success("Correct answer!");
-            setScore((prev) => ({ ...prev, correct: prev.correct + 1 }));
+            setScore((prev: ScoreState) => ({
+                ...prev,
+                correct: prev.correct + 1,
+            }));
         } else {
-            toast.error(
-                `Incorrect. The correct answer is: ${currentQ.options[currentQ.correct_answer]}`,
-            );
+            toast.error(`Incorrect. The correct answer is: ${currentQ.answer}`);
         }
 
         // Always increment total count
-        setScore((prev) => ({ ...prev, total: prev.total + 1 }));
+        setScore((prev: ScoreState) => ({ ...prev, total: prev.total + 1 }));
     };
 
     const handleNext = () => {
@@ -165,14 +155,33 @@ export default function QuizDisplay({ studySetId }: QuizDisplayProps) {
         if (currentQuestion < questions.length - 1) {
             setCurrentQuestion((prev) => prev + 1);
         } else {
-            // Quiz completed
-            toast.success(
-                `Quiz completed! Score: ${score.correct}/${score.total}`,
-            );
-            // Optionally reset to start over
-            setCurrentQuestion(0);
-            setScore({ correct: 0, total: 0 });
+            // Quiz completed - show results screen
+            showResults();
         }
+    };
+
+    // Function to display quiz results
+    const showResults = () => {
+        const percentage = (score.correct / score.total) * 100;
+        if (percentage >= 70) {
+            // Success message
+            toast.success(
+                `🎉 Congratulations! You scored ${score.correct}/${score.total} (${percentage.toFixed(1)}%)`,
+            );
+        } else {
+            // Encouragement message
+            toast.error(
+                `You scored ${score.correct}/${score.total} (${percentage.toFixed(1)}%). Keep studying, you'll do better next time!`,
+            );
+        }
+
+        // Reset quiz for next attempt
+        setTimeout(() => {
+            setCurrentQuestion(0);
+            setSelectedOption(null);
+            setShowAnswer(false);
+            setScore({ correct: 0, total: 0 });
+        }, 3000);
     };
 
     if (isLoading) {
@@ -238,7 +247,7 @@ export default function QuizDisplay({ studySetId }: QuizDisplayProps) {
                         <div
                             key={index}
                             className={`flex items-center space-x-2 p-3 rounded-md ${
-                                showAnswer && index === currentQ.correct_answer
+                                showAnswer && option === currentQ.answer
                                     ? "bg-green-50 border border-green-200"
                                     : showAnswer && index === selectedOption
                                       ? "bg-red-50 border border-red-200"
@@ -251,8 +260,7 @@ export default function QuizDisplay({ studySetId }: QuizDisplayProps) {
                             <Label
                                 htmlFor={`option-${index}`}
                                 className={`flex-1 ${
-                                    showAnswer &&
-                                    index === currentQ.correct_answer
+                                    showAnswer && option === currentQ.answer
                                         ? "font-medium text-green-700"
                                         : ""
                                 }`}>
