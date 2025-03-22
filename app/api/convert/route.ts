@@ -19,8 +19,27 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    // If it's already a PDF, just return it
+    if (file.name.toLowerCase().endsWith('.pdf')) {
+      const buffer = Buffer.from(await file.arrayBuffer());
+      return new NextResponse(buffer, {
+        headers: {
+          'Content-Type': 'application/pdf',
+          'Content-Disposition': `attachment; filename="${file.name}"`,
+        },
+      });
+    }
+
+    // Check if file is a supported type
+    if (!file.name.match(/\.(doc|docx|ppt|pptx)$/i)) {
+      return NextResponse.json(
+        { error: 'Unsupported file type. Please provide a Word document (.doc, .docx) or PowerPoint file (.ppt, .pptx)' },
+        { status: 400 }
+      );
+    }
+
     // Create temporary directory
-    const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'pptx-convert-'));
+    const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'doc-convert-'));
     const inputPath = path.join(tempDir, file.name);
     // The output PDF will have the same name as input but with .pdf extension
     const outputPath = path.join(tempDir, `${path.parse(file.name).name}.pdf`);
