@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { useParams } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
 import supabase from "@/lib/supabase";
 import { v4 as uuidv4 } from "uuid";
 import {
@@ -60,6 +60,7 @@ const ACCEPTED_FILE_TYPES = [
 
 export default function StudySetPage() {
     const { id } = useParams();
+    const router = useRouter();
     const [studySet, setStudySet] = useState<any>(null);
     const [materials, setMaterials] = useState<StorageFile[]>([]);
     const [isLoading, setIsLoading] = useState(true);
@@ -85,12 +86,29 @@ export default function StudySetPage() {
                 .eq("id", id)
                 .single();
 
-            if (error) throw error;
+            if (error) {
+                if (error.code === "PGRST116") {
+                    // Study set not found (PostgreSQL not found error)
+                    toast.error("Study set not found");
+                    router.push("/");
+                    return;
+                }
+                throw error;
+            }
+
+            if (!data) {
+                // Another case where data might be null
+                toast.error("Study set not found");
+                router.push("/");
+                return;
+            }
+
             setStudySet(data);
             setStudySetName(data.name || `Study Set #${id}`);
         } catch (error) {
             console.error("Error fetching study set:", error);
             toast.error("Failed to load study set");
+            router.push("/");
         }
     };
 
@@ -132,6 +150,30 @@ export default function StudySetPage() {
     const fetchStudyMaterials = async () => {
         try {
             setIsLoading(true);
+
+            // Check if the study set exists first
+            const { data: studySetData, error: studySetError } = await supabase
+                .from("study_sets")
+                .select("id")
+                .eq("id", id)
+                .single();
+
+            if (studySetError) {
+                if (studySetError.code === "PGRST116") {
+                    // Study set not found
+                    toast.error("Study set not found");
+                    router.push("/");
+                    return;
+                }
+                throw studySetError;
+            }
+
+            if (!studySetData) {
+                toast.error("Study set not found");
+                router.push("/");
+                return;
+            }
+
             const { data: dbMaterials, error: dbError } = await supabase
                 .from("study_materials")
                 .select(`id, created_at, study_set`)
