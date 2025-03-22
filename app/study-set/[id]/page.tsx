@@ -12,6 +12,7 @@ import {
     Pencil,
     Check,
     Eye,
+    Trash2,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -31,7 +32,17 @@ import {
     TableRow,
 } from "@/components/ui/table";
 import { toast } from "sonner";
-import PreviewDialog from "@/components/PreviewDialog";
+import axios from "axios";
+import {
+    AlertDialog,
+    AlertDialogAction,
+    AlertDialogCancel,
+    AlertDialogContent,
+    AlertDialogDescription,
+    AlertDialogFooter,
+    AlertDialogHeader,
+    AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 
 type StorageFile = {
     name: string;
@@ -57,11 +68,9 @@ export default function StudySetPage() {
     const [isEditingName, setIsEditingName] = useState(false);
     const [studySetName, setStudySetName] = useState("");
     const [isSavingName, setIsSavingName] = useState(false);
-    const [previewFile, setPreviewFile] = useState<{
-        url: string;
-        name: string;
-        type: string;
-    } | null>(null);
+    const [isConverting, setIsConverting] = useState(false);
+    const [deleteId, setDeleteId] = useState<string | null>(null);
+    const [isDeleting, setIsDeleting] = useState(false);
 
     useEffect(() => {
         fetchStudySet();
@@ -105,6 +114,13 @@ export default function StudySetPage() {
 
             // Update the local studySet data
             setStudySet({ ...studySet, name: studySetName });
+
+            // Notify sidebar about the name change
+            window.dispatchEvent(
+                new CustomEvent("studySetUpdated", {
+                    detail: { id, name: studySetName },
+                }),
+            );
         } catch (error) {
             console.error("Error updating study set name:", error);
             toast.error("Failed to update study set name");
@@ -146,11 +162,17 @@ export default function StudySetPage() {
 
                 if (storageData && storageData.length > 0) {
                     const file = storageData[0];
+                    // Extract file type - handle special case for converted PDFs
+                    let fileType = file.name.split(".").pop() || "";
+                    if (file.name.includes("-converted-to-pdf")) {
+                        fileType = "pdf";
+                    }
+
                     materials.push({
                         name: file.name,
                         id: material.id,
                         created_at: material.created_at,
-                        type: file.name.split(".").pop() || "",
+                        type: fileType,
                     });
                 }
             }
@@ -187,18 +209,125 @@ export default function StudySetPage() {
 
         try {
             setIsUploading(true);
+            let fileToUpload = file;
+            let fileName = file.name;
 
+            // Convert PPTX or DOCX to PDF if needed
+            if (
+                file.type ===
+                    "application/vnd.openxmlformats-officedocument.presentationml.presentation" ||
+                file.type ===
+                    "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+            ) {
+                setIsConverting(true);
+                toast.info("Converting file to PDF...");
+
+                const formData = new FormData();
+                formData.append("file", file);
+
+                try {
+                    const response = await axios.post(
+                        "/api/convert",
+                        formData,
+                        {
+                            responseType: "blob",
+                        },
+                    );
+
+                    const fileNameWithoutExt = fileName.substring(
+                        0,
+                        fileName.lastIndexOf("."),
+                    );
+                    fileName = `${fileNameWithoutExt}-converted-to-pdf.pdf`;
+
+                    fileToUpload = new File([response.data], fileName, {
+                        type: "application/pdf",
+                    });
+
+                    toast.success("File converted successfully!");
+                } catch (conversionError: any) {
+                    console.error("Conversion error:", conversionError);
+
+                    // Check if the error is because LibreOffice is not installed
+                    let errorMessage =
+                        "Conversion failed. Please try uploading a PDF file directly.";
+
+                    // If axios error has response data
+                    if (conversionError.response) {
+                        try {
+                            // Try to convert the blob to JSON to check for specific error messages
+                            const blob = conversionError.response.data;
+                            const text = await blob.text();
+                            const data = JSON.parse(text);
+
+                            if (data.notInstalled) {
+                                errorMessage =
+                                    "LibreOffice is not installed on the server. Please install LibreOffice or upload PDFs directly.";
+
+                                // Show installation instructions
+                                if (data.installInstructions) {
+                                    toast.info(
+                                        <div className="space-y-2">
+                                            <p className="font-medium">
+                                                Installation commands:
+                                            </p>
+                                            <ul className="text-sm space-y-1">
+                                                <li>
+                                                    <strong>Ubuntu:</strong>{" "}
+                                                    {
+                                                        data.installInstructions
+                                                            .ubuntu
+                                                    }
+                                                </li>
+                                                <li>
+                                                    <strong>Mac:</strong>{" "}
+                                                    {
+                                                        data.installInstructions
+                                                            .mac
+                                                    }
+                                                </li>
+                                                <li>
+                                                    <strong>Windows:</strong>{" "}
+                                                    {
+                                                        data.installInstructions
+                                                            .windows
+                                                    }
+                                                </li>
+                                            </ul>
+                                        </div>,
+                                        { duration: 10000 },
+                                    );
+                                }
+                            }
+                        } catch (e) {
+                            // If parsing fails, use the default error message
+                        }
+                    }
+
+                    toast.error(errorMessage);
+                    // Stop the upload process as the conversion failed
+                    setIsUploading(false);
+                    setIsConverting(false);
+                    return;
+                } finally {
+                    setIsConverting(false);
+                }
+            }
+
+            // Generate a unique folder ID for this file
             const folderId = uuidv4();
-            const filePath = `${folderId}/${file.name}`;
+            const filePath = `${folderId}/${fileName}`;
 
+            // Upload the file to Supabase storage
             const { error: uploadError } = await supabase.storage
                 .from("study-materials")
-                .upload(filePath, file);
+                .upload(filePath, fileToUpload);
 
             if (uploadError) {
                 throw new Error(`Upload failed: ${uploadError.message}`);
             }
 
+            // Create a database record for the study material
             const { error: studyMaterialError } = await supabase
                 .from("study_materials")
                 .insert({
@@ -228,17 +357,19 @@ export default function StudySetPage() {
     };
 
     const getFileIcon = (fileType: string) => {
-        switch (fileType.toLowerCase()) {
-            case "pdf":
-                return <FileIcon className="h-5 w-5 text-red-500" />;
-            case "pptx":
-                return <FileIcon className="h-5 w-5 text-orange-500" />;
-            case "png":
-                return <FileImage className="h-5 w-5 text-blue-500" />;
-            case "docx":
-                return <FileText className="h-5 w-5 text-blue-700" />;
-            default:
-                return <FileIcon className="h-5 w-5 text-gray-500" />;
+        // Convert filename to lowercase and handle cases where type might include "-converted-to-pdf"
+        const lowerType = fileType.toLowerCase();
+
+        if (lowerType === "pdf" || lowerType.includes("pdf")) {
+            return <FileIcon className="h-5 w-5 text-red-500" />;
+        } else if (lowerType === "pptx") {
+            return <FileIcon className="h-5 w-5 text-orange-500" />;
+        } else if (lowerType === "png") {
+            return <FileImage className="h-5 w-5 text-blue-500" />;
+        } else if (lowerType === "docx") {
+            return <FileText className="h-5 w-5 text-blue-700" />;
+        } else {
+            return <FileIcon className="h-5 w-5 text-gray-500" />;
         }
     };
 
@@ -258,19 +389,112 @@ export default function StudySetPage() {
     const handlePreview = async (material: StorageFile) => {
         try {
             const url = await getDownloadUrl(material.id, material.name);
-            setPreviewFile({
-                url,
-                name: material.name,
-                type: material.type,
-            });
+
+            // Check if it's a PDF or image file that can be previewed in the browser
+            const lowerType = material.type.toLowerCase();
+            const isPdfOrImage =
+                lowerType === "pdf" ||
+                lowerType === "png" ||
+                lowerType === "jpg" ||
+                lowerType === "jpeg";
+
+            if (!isPdfOrImage) {
+                // For non-previewable files, show a message and still open in new tab
+                toast.info(
+                    `Opening ${material.type.toUpperCase()} file in a new tab. You may need appropriate software to view it.`,
+                );
+            }
+
+            window.open(url, "_blank");
         } catch (error) {
             console.error("Error getting file URL:", error);
-            toast.error("Could not preview file");
+            toast.error("Could not access file");
         }
     };
 
-    const closePreview = () => {
-        setPreviewFile(null);
+    const handleDelete = async (materialId: string) => {
+        setDeleteId(materialId);
+    };
+
+    const confirmDelete = async () => {
+        if (!deleteId) return;
+
+        try {
+            setIsDeleting(true);
+
+            // Find the material to delete
+            const materialToDelete = materials.find((m) => m.id === deleteId);
+            if (!materialToDelete) {
+                throw new Error("Material not found");
+            }
+
+            // Delete the file from storage
+            const { error: storageError } = await supabase.storage
+                .from("study-materials")
+                .remove([`${deleteId}/${materialToDelete.name}`]);
+
+            if (storageError) {
+                throw new Error(
+                    `Failed to delete file: ${storageError.message}`,
+                );
+            }
+
+            // Delete the study material record
+            const { error: dbError } = await supabase
+                .from("study_materials")
+                .delete()
+                .eq("id", deleteId);
+
+            if (dbError) {
+                throw new Error(
+                    `Failed to delete study material: ${dbError.message}`,
+                );
+            }
+
+            // If this was the last material, delete the study set
+            if (materials.length === 1) {
+                const { error: studySetError } = await supabase
+                    .from("study_sets")
+                    .delete()
+                    .eq("id", id);
+
+                if (studySetError) {
+                    throw new Error(
+                        `Failed to delete study set: ${studySetError.message}`,
+                    );
+                }
+
+                toast.success("Study set deleted successfully!");
+
+                // Notify sidebar about study set deletion
+                window.dispatchEvent(
+                    new CustomEvent("studySetDeleted", {
+                        detail: { id },
+                    }),
+                );
+
+                // Redirect to the study sets page
+                window.location.href = "/";
+                return;
+            }
+
+            toast.success("Material deleted successfully!");
+            fetchStudyMaterials();
+        } catch (error) {
+            console.error("Error deleting material:", error);
+            toast.error(
+                error instanceof Error
+                    ? error.message
+                    : "An unknown error occurred",
+            );
+        } finally {
+            setIsDeleting(false);
+            setDeleteId(null);
+        }
+    };
+
+    const cancelDelete = () => {
+        setDeleteId(null);
     };
 
     if (!studySet) {
@@ -329,8 +553,8 @@ export default function StudySetPage() {
                     <CardHeader>
                         <CardTitle>Upload Study Material</CardTitle>
                         <CardDescription>
-                            Add new materials to this study set. Accepts PDF,
-                            PPTX, PNG, and DOCX files.
+                            Add new materials to this study set. PPTX and DOCX
+                            files will be automatically converted to PDF format.
                         </CardDescription>
                     </CardHeader>
                     <CardContent>
@@ -341,7 +565,7 @@ export default function StudySetPage() {
                                     type="file"
                                     onChange={handleFileChange}
                                     accept=".pdf,.pptx,.png,.docx"
-                                    disabled={isUploading}
+                                    disabled={isUploading || isConverting}
                                 />
                             </div>
                             {file && (
@@ -354,10 +578,14 @@ export default function StudySetPage() {
                             )}
                             <Button
                                 onClick={handleUpload}
-                                disabled={!file || isUploading}
+                                disabled={!file || isUploading || isConverting}
                                 className="w-full flex items-center gap-2">
                                 <UploadCloud className="h-5 w-5" />
-                                {isUploading ? "Uploading..." : "Upload File"}
+                                {isUploading
+                                    ? "Uploading..."
+                                    : isConverting
+                                      ? "Converting..."
+                                      : "Upload File"}
                             </Button>
                         </div>
                     </CardContent>
@@ -385,80 +613,106 @@ export default function StudySetPage() {
                                 </p>
                             </div>
                         ) : (
-                            <div className="max-h-[400px] overflow-y-auto">
-                                <Table>
-                                    <TableHeader>
-                                        <TableRow>
-                                            <TableHead>File</TableHead>
-                                            <TableHead>Uploaded</TableHead>
-                                            <TableHead className="text-right">
-                                                Actions
-                                            </TableHead>
-                                        </TableRow>
-                                    </TableHeader>
-                                    <TableBody>
-                                        {materials.map((material) => (
-                                            <TableRow key={material.id}>
-                                                <TableCell>
-                                                    <div className="flex items-center gap-2">
+                            <div className="grid grid-cols-1 gap-4 max-h-[400px] overflow-y-auto pr-2">
+                                {materials.map((material) => (
+                                    <Card
+                                        key={material.id}
+                                        className="overflow-hidden border-gray-200">
+                                        <CardContent className="p-4">
+                                            <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+                                                <div className="flex items-center gap-3 min-w-0 w-full md:w-auto">
+                                                    <div className="flex-shrink-0 p-1.5 bg-gray-50 rounded">
                                                         {getFileIcon(
                                                             material.type,
                                                         )}
-                                                        <span className="font-medium">
+                                                    </div>
+                                                    <div className="min-w-0 flex-1 md:max-w-[300px]">
+                                                        <p className="font-medium truncate">
                                                             {material.name}
-                                                        </span>
+                                                        </p>
+                                                        <p className="text-xs text-gray-500">
+                                                            {new Date(
+                                                                material.created_at,
+                                                            ).toLocaleString()}
+                                                        </p>
                                                     </div>
-                                                </TableCell>
-                                                <TableCell className="text-sm text-gray-500">
-                                                    {new Date(
-                                                        material.created_at,
-                                                    ).toLocaleString()}
-                                                </TableCell>
-                                                <TableCell className="text-right">
-                                                    <div className="flex justify-end gap-2">
-                                                        <Button
-                                                            variant="ghost"
-                                                            size="sm"
-                                                            onClick={() =>
-                                                                handlePreview(
-                                                                    material,
-                                                                )
-                                                            }
-                                                            className="gap-1">
-                                                            <Eye className="h-4 w-4" />
-                                                            Preview
-                                                        </Button>
-                                                        <Button
-                                                            variant="ghost"
-                                                            size="sm"
-                                                            onClick={() =>
-                                                                handleDownload(
-                                                                    material,
-                                                                )
-                                                            }>
-                                                            Download
-                                                        </Button>
-                                                    </div>
-                                                </TableCell>
-                                            </TableRow>
-                                        ))}
-                                    </TableBody>
-                                </Table>
+                                                </div>
+                                                <div className="flex-shrink-0 flex flex-row gap-2 w-full md:w-auto justify-start md:justify-end">
+                                                    <Button
+                                                        variant="outline"
+                                                        size="sm"
+                                                        onClick={() =>
+                                                            handlePreview(
+                                                                material,
+                                                            )
+                                                        }
+                                                        className="gap-1 flex-none">
+                                                        <Eye className="h-4 w-4" />
+                                                        View
+                                                    </Button>
+                                                    <Button
+                                                        variant="outline"
+                                                        size="sm"
+                                                        onClick={() =>
+                                                            handleDownload(
+                                                                material,
+                                                            )
+                                                        }
+                                                        className="gap-1 flex-none">
+                                                        Download
+                                                    </Button>
+                                                    <Button
+                                                        variant="outline"
+                                                        size="sm"
+                                                        onClick={() =>
+                                                            handleDelete(
+                                                                material.id,
+                                                            )
+                                                        }
+                                                        className="text-red-500 hover:text-red-700 hover:bg-red-50 gap-1 flex-none">
+                                                        <Trash2 className="h-4 w-4" />
+                                                        Delete
+                                                    </Button>
+                                                </div>
+                                            </div>
+                                        </CardContent>
+                                    </Card>
+                                ))}
                             </div>
                         )}
                     </CardContent>
                 </Card>
             </div>
 
-            {previewFile && (
-                <PreviewDialog
-                    isOpen={!!previewFile}
-                    onClose={closePreview}
-                    fileUrl={previewFile.url}
-                    fileName={previewFile.name}
-                    fileType={previewFile.type}
-                />
-            )}
+            <AlertDialog
+                open={!!deleteId}
+                onOpenChange={(open) => !open && cancelDelete()}>
+                <AlertDialogContent>
+                    <AlertDialogHeader>
+                        <AlertDialogTitle>
+                            {materials.length === 1
+                                ? "Delete Study Set?"
+                                : "Delete Study Material?"}
+                        </AlertDialogTitle>
+                        <AlertDialogDescription>
+                            {materials.length === 1
+                                ? "This is the last material in this study set. Deleting it will also delete the entire study set. This action cannot be undone."
+                                : "This will permanently delete the selected study material. This action cannot be undone."}
+                        </AlertDialogDescription>
+                    </AlertDialogHeader>
+                    <AlertDialogFooter>
+                        <AlertDialogCancel disabled={isDeleting}>
+                            Cancel
+                        </AlertDialogCancel>
+                        <AlertDialogAction
+                            onClick={confirmDelete}
+                            disabled={isDeleting}
+                            className="bg-red-600 hover:bg-red-700 text-white">
+                            {isDeleting ? "Deleting..." : "Delete"}
+                        </AlertDialogAction>
+                    </AlertDialogFooter>
+                </AlertDialogContent>
+            </AlertDialog>
         </div>
     );
 }

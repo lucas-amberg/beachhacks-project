@@ -1,27 +1,8 @@
 "use client";
 
-import { useState, useEffect } from "react";
-import dynamic from "next/dynamic";
-import {
-    FileIcon,
-    FileImage,
-    FileText,
-    ChevronLeft,
-    ChevronRight,
-    X,
-} from "lucide-react";
+import { FileIcon, FileImage, FileText, X, ExternalLink } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import Image from "next/image";
-
-// Dynamically import react-pdf to avoid SSR issues
-const PDFViewer = dynamic(() => import("./PDFViewer"), {
-    ssr: false,
-    loading: () => (
-        <div className="flex justify-center items-center h-[450px] w-[450px] bg-gray-100 rounded-md">
-            <p>Loading PDF viewer...</p>
-        </div>
-    ),
-});
 
 type FilePreviewProps = {
     url: string;
@@ -39,9 +20,7 @@ export default function FilePreview({
     const renderPreview = () => {
         const lowerFileType = fileType.toLowerCase();
 
-        if (lowerFileType === "pdf") {
-            return <PDFViewer file={url} />;
-        } else if (lowerFileType === "png") {
+        if (lowerFileType === "png") {
             return (
                 <div className="border rounded-md overflow-hidden bg-white p-2">
                     <Image
@@ -55,36 +34,45 @@ export default function FilePreview({
                 </div>
             );
         } else {
-            // For other file types like PPTX, DOCX, etc.
-            const getFileTypeIcon = () => {
-                switch (lowerFileType) {
-                    case "pptx":
-                        return (
-                            <FileIcon className="h-24 w-24 text-orange-500" />
-                        );
-                    case "docx":
-                        return <FileText className="h-24 w-24 text-blue-700" />;
-                    default:
-                        return <FileIcon className="h-24 w-24 text-gray-500" />;
-                }
-            };
-
-            return (
-                <div className="flex flex-col items-center justify-center gap-4 p-8 border rounded-md bg-gray-50">
-                    {getFileTypeIcon()}
-                    <p className="text-center font-medium">{fileName}</p>
-                    <p className="text-sm text-gray-500">
-                        Preview not available
-                    </p>
-                    <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => window.open(url, "_blank")}>
-                        Download to View
-                    </Button>
-                </div>
-            );
+            return renderFallbackView(lowerFileType.toUpperCase());
         }
+    };
+
+    const renderFallbackView = (fileType: string) => {
+        const getFileTypeIcon = () => {
+            switch (fileType.toLowerCase()) {
+                case "pdf":
+                    return <FileIcon className="h-24 w-24 text-red-500" />;
+                case "pptx":
+                    return <FileIcon className="h-24 w-24 text-orange-500" />;
+                case "png":
+                    return <FileImage className="h-24 w-24 text-blue-500" />;
+                case "docx":
+                    return <FileText className="h-24 w-24 text-blue-700" />;
+                default:
+                    return <FileIcon className="h-24 w-24 text-gray-500" />;
+            }
+        };
+
+        return (
+            <div className="flex flex-col items-center justify-center gap-4 p-8 border rounded-md bg-gray-50">
+                {getFileTypeIcon()}
+                <p className="text-center font-medium">{fileName}</p>
+                <p className="text-sm text-gray-500">
+                    {fileType === "PDF"
+                        ? "PDF file preview is available in your browser"
+                        : `Preview not available for ${fileType} files`}
+                </p>
+                <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => window.open(url, "_blank")}
+                    className="gap-2">
+                    <ExternalLink className="h-4 w-4" />
+                    Open in Browser
+                </Button>
+            </div>
+        );
     };
 
     return (

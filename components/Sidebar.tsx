@@ -38,6 +38,7 @@ export default function Sidebar() {
 
         fetchStudySets();
 
+        // Listen for real-time database changes
         const channel = supabase
             .channel("study_sets_changes")
             .on(
@@ -49,8 +50,39 @@ export default function Sidebar() {
             )
             .subscribe();
 
+        // Listen for custom event when a study set is created
+        const handleStudySetCreated = (e: any) => {
+            fetchStudySets();
+        };
+
+        // Listen for custom event when a study set is updated
+        const handleStudySetUpdated = (e: any) => {
+            fetchStudySets();
+        };
+
+        // Listen for custom event when a study set is deleted
+        const handleStudySetDeleted = (e: any) => {
+            fetchStudySets();
+        };
+
+        window.addEventListener("studySetCreated", handleStudySetCreated);
+        window.addEventListener("studySetUpdated", handleStudySetUpdated);
+        window.addEventListener("studySetDeleted", handleStudySetDeleted);
+
         return () => {
             supabase.removeChannel(channel);
+            window.removeEventListener(
+                "studySetCreated",
+                handleStudySetCreated,
+            );
+            window.removeEventListener(
+                "studySetUpdated",
+                handleStudySetUpdated,
+            );
+            window.removeEventListener(
+                "studySetDeleted",
+                handleStudySetDeleted,
+            );
         };
     }, []);
 
@@ -66,6 +98,14 @@ export default function Sidebar() {
             }
 
             if (data && data.length > 0) {
+                // Force a sidebar refresh by dispatching a custom event
+                window.dispatchEvent(
+                    new CustomEvent("studySetCreated", {
+                        detail: data[0],
+                    }),
+                );
+
+                // Navigate to the new study set
                 router.push(`/study-set/${data[0].id}`);
             }
         } catch (error) {
