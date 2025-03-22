@@ -30,7 +30,10 @@ export default function CreateStudySetPage() {
     const [file, setFile] = useState<File | null>(null);
     const [isUploading, setIsUploading] = useState(false);
     const [isConverting, setIsConverting] = useState(false);
-    const [studySetName, setStudySetName] = useState("New Study Set");
+    const [isGeneratingQuiz, setIsGeneratingQuiz] = useState(false);
+    const [isGeneratingName, setIsGeneratingName] = useState(false);
+    const [studySetName, setStudySetName] = useState<string | null>(null);
+    const [questionCount, setQuestionCount] = useState(5);
 
     const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
         const selectedFile = e.target.files?.[0];
@@ -45,6 +48,50 @@ export default function CreateStudySetPage() {
         }
 
         setFile(selectedFile);
+
+        // When file is selected, generate a name suggestion
+        generateNameSuggestion(selectedFile);
+    };
+
+    const generateNameSuggestion = async (selectedFile: File) => {
+        try {
+            setIsGeneratingName(true);
+
+            // First, extract some text from the file to send to the API
+            const formData = new FormData();
+            formData.append("file", selectedFile);
+
+            toast.info("Analyzing document to generate a name...");
+
+            const response = await fetch("/api/generate-name", {
+                method: "POST",
+                body: formData,
+            });
+
+            if (!response.ok) {
+                throw new Error("Failed to generate name");
+            }
+
+            const result = await response.json();
+
+            if (result.name) {
+                setStudySetName(result.name);
+                toast.success(
+                    "Study set name suggested based on your document",
+                );
+            } else {
+                // Fallback to a default name
+                setStudySetName(
+                    `Study Set - ${new Date().toLocaleDateString()}`,
+                );
+            }
+        } catch (error) {
+            console.error("Error generating name:", error);
+            // Fallback to a default name
+            setStudySetName(`Study Set - ${new Date().toLocaleDateString()}`);
+        } finally {
+            setIsGeneratingName(false);
+        }
     };
 
     const handleSubmit = async () => {
@@ -53,10 +100,9 @@ export default function CreateStudySetPage() {
             return;
         }
 
-        if (!studySetName.trim()) {
-            toast.error("Please enter a name for your study set");
-            return;
-        }
+        // Use generated name or fallback
+        const finalStudySetName =
+            studySetName || `Study Set - ${new Date().toLocaleDateString()}`;
 
         try {
             setIsUploading(true);
@@ -64,7 +110,7 @@ export default function CreateStudySetPage() {
             // Step 1: Create the study set
             const { data: studySetData, error: studySetError } = await supabase
                 .from("study_sets")
-                .insert({ name: studySetName })
+                .insert({ name: finalStudySetName })
                 .select();
 
             if (studySetError) {
@@ -186,7 +232,7 @@ export default function CreateStudySetPage() {
                 }
             }
 
-            // Step 3: Upload the file
+            // Step 3: Upload the file to study-materials folder
             const materialId = uuidv4();
             const filePath = `${materialId}/${fileName}`;
 
@@ -222,6 +268,82 @@ export default function CreateStudySetPage() {
                 );
             }
 
+            // Step 5: Also upload file to files folder and update study set record
+            const filesPath = `${studySetId}/${fileName}`;
+
+            // Upload to files bucket
+            const { error: filesUploadError } = await supabase.storage
+                .from("files")
+                .upload(filesPath, fileToUpload);
+
+            if (filesUploadError) {
+                console.error(
+                    "Error uploading to files bucket:",
+                    filesUploadError as Error,
+                );
+                // Continue anyway since we have it in study-materials
+            } else {
+                // Update study set with file path only
+                await supabase
+                    .from("study_sets")
+                    .update({
+                        file_path: filesPath,
+                    })
+                    .eq("id", studySetId);
+            }
+
+            // Step 6: Generate quiz questions
+            setIsGeneratingQuiz(true);
+            toast.info("Generating quiz questions...");
+
+            try {
+                // Get a public URL for the file (for GPT Vision to access)
+                const { data: urlData } = await supabase.storage
+                    .from("files")
+                    .createSignedUrl(filesPath, 60 * 60); // 1 hour expiry
+
+                const fileUrl = urlData?.signedUrl;
+
+                // Create form data with the file and include file info directly
+                const quizFormData = new FormData();
+                quizFormData.append("file", fileToUpload);
+                quizFormData.append("studySetId", studySetId.toString());
+                quizFormData.append("numQuestions", questionCount.toString());
+                quizFormData.append("fileName", fileName);
+                quizFormData.append("fileType", fileToUpload.type);
+
+                // Add the file URL if available (for GPT Vision)
+                if (fileUrl) {
+                    quizFormData.append("fileUrl", fileUrl);
+                }
+
+                // Call the API to generate quiz questions
+                const quizResponse = await fetch("/api/generate-quiz", {
+                    method: "POST",
+                    body: quizFormData,
+                });
+
+                const quizResult = await quizResponse.json();
+
+                if (!quizResponse.ok) {
+                    console.error("Error generating quiz:", quizResult.error);
+                    // Continue anyway - quiz generation is a bonus feature
+                    toast.error(
+                        "Quiz generation failed, but study set was created successfully",
+                    );
+                } else {
+                    toast.success("Quiz questions generated successfully!");
+                }
+            } catch (quizError) {
+                console.error("Error generating quiz:", quizError);
+                // Continue anyway - study set is created successfully
+                toast.error(
+                    "Quiz generation failed, but study set was created successfully",
+                );
+            } finally {
+                setIsGeneratingQuiz(false);
+            }
+
             // Notify sidebar about the new study set
             window.dispatchEvent(
                 new CustomEvent("studySetCreated", {
@@ -242,6 +364,7 @@ export default function CreateStudySetPage() {
             );
         } finally {
             setIsUploading(false);
+            setIsGeneratingQuiz(false);
         }
     };
 
@@ -266,23 +389,36 @@ export default function CreateStudySetPage() {
                 </CardHeader>
                 <CardContent>
                     <div className="space-y-4">
-                        <div>
-                            <label
-                                htmlFor="name"
-                                className="text-sm font-medium block mb-1">
-                                Study Set Name
-                            </label>
-                            <Input
-                                id="name"
-                                value={studySetName}
-                                onChange={(e) =>
-                                    setStudySetName(e.target.value)
-                                }
-                                placeholder="Enter a name for your study set"
-                                className="w-full"
-                                disabled={isUploading}
-                            />
-                        </div>
+                        {studySetName && (
+                            <div>
+                                <label
+                                    htmlFor="name"
+                                    className="text-sm font-medium block mb-1">
+                                    Suggested Study Set Name
+                                </label>
+                                <div className="flex gap-2 items-center">
+                                    <Input
+                                        id="name"
+                                        value={studySetName}
+                                        onChange={(e) =>
+                                            setStudySetName(e.target.value)
+                                        }
+                                        placeholder="Analyzing document..."
+                                        className="w-full"
+                                        disabled={
+                                            isUploading || isGeneratingName
+                                        }
+                                    />
+                                    {isGeneratingName && (
+                                        <div className="animate-spin h-4 w-4 border-2 border-primary border-t-transparent rounded-full"></div>
+                                    )}
+                                </div>
+                                <p className="text-xs text-muted-foreground mt-1">
+                                    Name suggested based on your document. You
+                                    can edit it if you wish.
+                                </p>
+                            </div>
+                        )}
 
                         <div>
                             <label
@@ -290,41 +426,77 @@ export default function CreateStudySetPage() {
                                 className="text-sm font-medium block mb-1">
                                 Upload File
                             </label>
-                            <div className="grid w-full items-center gap-1.5">
-                                <Input
-                                    id="file"
-                                    type="file"
-                                    onChange={handleFileChange}
-                                    accept=".pdf,.pptx,.png,.docx"
-                                    disabled={isUploading || isConverting}
-                                />
-                            </div>
-                            {file && (
-                                <div className="text-sm mt-2">
-                                    Selected file:{" "}
-                                    <span className="font-medium">
-                                        {file.name}
-                                    </span>
-                                </div>
-                            )}
-                            <p className="text-xs text-gray-500 mt-1">
-                                Supported formats: PDF, PPTX, PNG, DOCX. PPTX
-                                and DOCX files will be converted to PDF.
+                            <Input
+                                id="file"
+                                type="file"
+                                onChange={handleFileChange}
+                                className="w-full"
+                                disabled={isUploading}
+                                accept=".pdf,.pptx,.png,.docx"
+                            />
+                            <p className="text-xs text-muted-foreground mt-1">
+                                Supported formats: PDF, PPTX, PNG, DOCX
                             </p>
                         </div>
+
+                        <div>
+                            <label
+                                htmlFor="questionCount"
+                                className="text-sm font-medium block mb-1">
+                                Number of Quiz Questions
+                            </label>
+                            <div className="flex items-center gap-3">
+                                <input
+                                    id="questionCount"
+                                    type="range"
+                                    min="3"
+                                    max="15"
+                                    step="1"
+                                    value={questionCount}
+                                    onChange={(e) =>
+                                        setQuestionCount(
+                                            parseInt(e.target.value, 10),
+                                        )
+                                    }
+                                    className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-primary"
+                                    disabled={isUploading}
+                                />
+                                <span className="text-sm font-medium">
+                                    {questionCount}
+                                </span>
+                            </div>
+                            <p className="text-xs text-muted-foreground mt-1">
+                                How many quiz questions should be generated
+                                (3-15)
+                            </p>
+                        </div>
+
+                        {file && (
+                            <div className="text-sm">
+                                Selected file:{" "}
+                                <span className="font-medium">{file.name}</span>
+                            </div>
+                        )}
                     </div>
                 </CardContent>
                 <CardFooter>
                     <Button
                         onClick={handleSubmit}
-                        disabled={!file || isUploading || isConverting}
+                        disabled={
+                            !file ||
+                            isUploading ||
+                            isConverting ||
+                            isGeneratingQuiz
+                        }
                         className="w-full flex items-center gap-2">
                         <UploadCloud className="h-5 w-5" />
                         {isUploading
                             ? "Creating..."
                             : isConverting
                               ? "Converting..."
-                              : "Create Study Set"}
+                              : isGeneratingQuiz
+                                ? "Generating Quiz..."
+                                : "Create Study Set"}
                     </Button>
                 </CardFooter>
             </Card>
