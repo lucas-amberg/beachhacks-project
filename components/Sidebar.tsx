@@ -87,30 +87,8 @@ export default function Sidebar() {
     }, []);
 
     const createNewStudySet = async () => {
-        try {
-            const { data, error } = await supabase
-                .from("study_sets")
-                .insert({ name: "New Study Set" })
-                .select();
-
-            if (error) {
-                throw error;
-            }
-
-            if (data && data.length > 0) {
-                // Force a sidebar refresh by dispatching a custom event
-                window.dispatchEvent(
-                    new CustomEvent("studySetCreated", {
-                        detail: data[0],
-                    }),
-                );
-
-                // Navigate to the new study set
-                router.push(`/study-set/${data[0].id}`);
-            }
-        } catch (error) {
-            console.error("Error creating study set:", error);
-        }
+        // Instead of creating an empty study set, navigate to the upload page
+        router.push(`/create-study-set`);
     };
 
     const getStudySetDisplayName = (studySet: StudySet) => {

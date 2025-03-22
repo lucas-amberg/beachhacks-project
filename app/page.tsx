@@ -18,31 +18,8 @@ export default function Home() {
     const router = useRouter();
 
     const createNewStudySet = async () => {
-        try {
-            const { data, error } = await supabase
-                .from("study_sets")
-                .insert({ name: "New Study Set" })
-                .select();
-
-            if (error) {
-                throw error;
-            }
-
-            if (data && data.length > 0) {
-                // Force a sidebar refresh by dispatching a custom event
-                window.dispatchEvent(
-                    new CustomEvent("studySetCreated", {
-                        detail: data[0],
-                    }),
-                );
-
-                // Navigate to the new study set
-                router.push(`/study-set/${data[0].id}`);
-            }
-        } catch (error) {
-            console.error("Error creating study set:", error);
-            toast.error("Failed to create study set");
-        }
+        // Instead of creating an empty study set immediately, navigate to the create page
+        router.push(`/create-study-set`);
     };
 
     return (
@@ -74,7 +51,7 @@ export default function Home() {
                     <Button
                         className="mt-2 gap-2 items-center"
                         onClick={createNewStudySet}>
-                        <span>Create Your First Study Set</span>
+                        <span>Create New Study Set</span>
                         <ArrowRight className="h-4 w-4" />
                     </Button>
                 </CardFooter>
