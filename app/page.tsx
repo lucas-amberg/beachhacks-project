@@ -29,6 +29,14 @@ export default function Home() {
             }
 
             if (data && data.length > 0) {
+                // Force a sidebar refresh by dispatching a custom event
+                window.dispatchEvent(
+                    new CustomEvent("studySetCreated", {
+                        detail: data[0],
+                    }),
+                );
+
+                // Navigate to the new study set
                 router.push(`/study-set/${data[0].id}`);
             }
         } catch (error) {

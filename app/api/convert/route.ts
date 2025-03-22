@@ -1,11 +1,29 @@
 import { NextRequest, NextResponse } from "next/server";
-import { exec } from "child_process";
-import { promisify } from "util";
 import fs from "fs/promises";
 import path from "path";
 import os from "os";
+import libre from "libreoffice-convert";
+import { promisify } from "util";
 
-const execAsync = promisify(exec);
+// Promisify the convert function
+const convertAsync = promisify(libre.convert);
+
+// Check if LibreOffice is available
+async function isLibreOfficeAvailable() {
+    try {
+        // Try a small test conversion
+        const testBuffer = Buffer.from("test");
+        await convertAsync(testBuffer, ".pdf", undefined);
+        return true;
+    } catch (error: any) {
+        if (error.message && error.message.includes("Command failed")) {
+            // LibreOffice command exists but failed for some other reason
+            return true;
+        }
+        // If it's a "command not found" type error, LibreOffice is not installed
+        return false;
+    }
+}
 
 export async function POST(request: NextRequest) {
     try {
@@ -40,37 +58,36 @@ export async function POST(request: NextRequest) {
             );
         }
 
-        // Create temporary directory
-        const tempDir = await fs.mkdtemp(
-            path.join(os.tmpdir(), "doc-convert-"),
-        );
-        const inputPath = path.join(tempDir, file.name);
-        // The output PDF will have the same name as input but with .pdf extension
-        const outputPath = path.join(
-            tempDir,
-            `${path.parse(file.name).name}.pdf`,
-        );
+        // Check if LibreOffice is available
+        const libreAvailable = await isLibreOfficeAvailable();
 
-        // Write uploaded file to temp directory
-        const buffer = Buffer.from(await file.arrayBuffer());
-        await fs.writeFile(inputPath, buffer);
-
-        try {
-            // Convert using LibreOffice
-            const { stdout, stderr } = await execAsync(
-                `soffice --headless --convert-to pdf --outdir "${tempDir}" "${inputPath}"`,
+        if (!libreAvailable) {
+            return NextResponse.json(
+                {
+                    error: "LibreOffice is not installed on the server.",
+                    notInstalled: true,
+                    installInstructions: {
+                        ubuntu: "sudo apt-get install libreoffice",
+                        mac: "brew install --cask libreoffice",
+                        windows:
+                            "Install LibreOffice from https://www.libreoffice.org/download/download/",
+                    },
+                },
+                { status: 500 },
             );
-            console.log("Conversion output:", stdout);
-            console.log("Conversion errors:", stderr);
+        }
 
-            // Check if the output file exists
-            await fs.access(outputPath);
+        // Convert the file to PDF using libreoffice-convert
+        try {
+            // Get file buffer
+            const inputBuffer = Buffer.from(await file.arrayBuffer());
 
-            // Read the converted PDF
-            const pdfBuffer = await fs.readFile(outputPath);
-
-            // Clean up temp files
-            await fs.rm(tempDir, { recursive: true, force: true });
+            // Convert to PDF
+            const pdfBuffer = await convertAsync(
+                inputBuffer,
+                ".pdf",
+                undefined,
+            );
 
             // Return the PDF
             return new NextResponse(pdfBuffer, {
@@ -81,14 +98,15 @@ export async function POST(request: NextRequest) {
             });
         } catch (conversionError) {
             console.error("Conversion error:", conversionError);
-            // Clean up temp files even if conversion fails
-            await fs.rm(tempDir, { recursive: true, force: true });
-            throw conversionError;
+            return NextResponse.json(
+                { error: "Error converting file to PDF" },
+                { status: 500 },
+            );
         }
     } catch (error) {
         console.error("Error:", error);
         return NextResponse.json(
-            { error: "Error converting file" },
+            { error: "Error processing file" },
             { status: 500 },
         );
     }
