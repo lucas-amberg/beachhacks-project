@@ -10,6 +10,6 @@ export interface QuizQuestion {
     category: string;
     question: string;
     options: string[];
-    correct_answer: number;
+    answer: string;
     created_at: string;
 }

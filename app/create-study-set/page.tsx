@@ -17,6 +17,7 @@ import {
 } from "@/components/ui/card";
 import { toast } from "sonner";
 import axios from "axios";
+import { getTextFromPDF } from "@/app/lib/extractText";
 
 const ACCEPTED_FILE_TYPES = [
     "application/pdf",
@@ -34,6 +35,7 @@ export default function CreateStudySetPage() {
     const [isGeneratingName, setIsGeneratingName] = useState(false);
     const [studySetName, setStudySetName] = useState<string | null>(null);
     const [questionCount, setQuestionCount] = useState(5);
+    const [pdfBuffer, setPdfBuffer] = useState<ArrayBuffer | null>(null);
 
     const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
         const selectedFile = e.target.files?.[0];
@@ -127,89 +129,75 @@ export default function CreateStudySetPage() {
 
             // Step 2: Process the file (convert if needed)
             let fileToUpload = file;
-            let fileName = file.name;
+            // Use a temporary name during conversion
+            let tempFileName = file.name;
+            let finalFileName = file.name;
 
-            // Convert PPTX or DOCX to PDF if needed
+            // Convert files if needed
             if (
-                file.type ===
-                    "application/vnd.openxmlformats-officedocument.presentationml.presentation" ||
-                file.type ===
-                    "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                file.type.includes("pdf") ||
+                file.type.includes("vnd.openxmlformats")
             ) {
                 setIsConverting(true);
-                toast.info("Converting file to PDF...");
-
-                const formData = new FormData();
-                formData.append("file", file);
+                toast.info("Converting file for processing...");
 
                 try {
+                    // Create a form for sending to the conversion API
+                    const formData = new FormData();
+                    formData.append("file", file);
+
+                    // Call our conversion API
                     const response = await axios.post(
                         "/api/convert",
                         formData,
                         {
-                            responseType: "blob",
+                            headers: {
+                                "Content-Type": "multipart/form-data",
+                            },
+                            responseType: "arraybuffer",
                         },
                     );
 
-                    const fileNameWithoutExt = fileName.substring(
-                        0,
-                        fileName.lastIndexOf("."),
-                    );
-                    fileName = `${fileNameWithoutExt}-converted-to-pdf.pdf`;
-
-                    fileToUpload = new File([response.data], fileName, {
+                    // Create a new file from the PDF data
+                    const pdfBlob = new Blob([response.data], {
+                        type: "application/pdf",
+                    });
+                    const pdfFileName = file.name.split(".")[0] + ".pdf";
+                    const pdfFile = new File([pdfBlob], pdfFileName, {
                         type: "application/pdf",
                     });
 
-                    toast.success("File converted successfully!");
-                } catch (conversionError: any) {
-                    // Handle conversion errors
-                    let errorMessage =
-                        "Conversion failed. Please try uploading a PDF file directly.";
+                    // Update the fileToUpload with the converted file
+                    fileToUpload = pdfFile;
+                    finalFileName = pdfFileName;
 
-                    if (conversionError.response) {
+                    toast.success("File converted successfully");
+
+                    // For quiz generation, we might need to extract the text content
+                    try {
+                        // For quiz generation later, extract text directly from the PDF
+                        const fileArrayBuffer = await pdfFile.arrayBuffer();
+
+                        // Store the array buffer for later use
+                        setPdfBuffer(fileArrayBuffer);
+                    } catch (extractError) {
+                        console.error(
+                            "Warning: Could not cache file content for quiz generation",
+                            extractError,
+                        );
+                        // Continue anyway, we'll try to extract again when needed
+                    }
+                } catch (error: any) {
+                    console.error("Error converting file:", error);
+                    let errorMessage = "Failed to convert file";
+
+                    // Try to extract more detailed error message
+                    if (error.response && error.response.data) {
                         try {
-                            const blob = conversionError.response.data;
-                            const text = await blob.text();
-                            const data = JSON.parse(text);
-
-                            if (data.notInstalled) {
-                                errorMessage =
-                                    "LibreOffice is not installed on the server. Please install LibreOffice or upload PDFs directly.";
-
-                                if (data.installInstructions) {
-                                    toast.info(
-                                        <div className="space-y-2">
-                                            <p className="font-medium">
-                                                Installation commands:
-                                            </p>
-                                            <ul className="text-sm space-y-1">
-                                                <li>
-                                                    <strong>Ubuntu:</strong>{" "}
-                                                    {
-                                                        data.installInstructions
-                                                            .ubuntu
-                                                    }
-                                                </li>
-                                                <li>
-                                                    <strong>Mac:</strong>{" "}
-                                                    {
-                                                        data.installInstructions
-                                                            .mac
-                                                    }
-                                                </li>
-                                                <li>
-                                                    <strong>Windows:</strong>{" "}
-                                                    {
-                                                        data.installInstructions
-                                                            .windows
-                                                    }
-                                                </li>
-                                            </ul>
-                                        </div>,
-                                        { duration: 10000 },
-                                    );
-                                }
+                            if (typeof error.response.data === "string") {
+                                errorMessage = error.response.data;
+                            } else if (error.response.data.error) {
+                                errorMessage = error.response.data.error;
                             }
                         } catch (e) {
                             // If parsing fails, use the default error message
@@ -234,7 +222,7 @@ export default function CreateStudySetPage() {
 
             // Step 3: Upload the file to study-materials folder
             const materialId = uuidv4();
-            const filePath = `${materialId}/${fileName}`;
+            const filePath = `${materialId}/${finalFileName}`;
 
             const { error: uploadError } = await supabase.storage
                 .from("study-materials")
@@ -269,7 +257,7 @@ export default function CreateStudySetPage() {
             }
 
             // Step 5: Also upload file to files folder and update study set record
-            const filesPath = `${studySetId}/${fileName}`;
+            const filesPath = `${studySetId}/${finalFileName}`;
 
             // Upload to files bucket
             const { error: filesUploadError } = await supabase.storage
@@ -304,17 +292,46 @@ export default function CreateStudySetPage() {
 
                 const fileUrl = urlData?.signedUrl;
 
+                // Try to extract text content from the PDF if available
+                let fileContent = "";
+                if (pdfBuffer) {
+                    try {
+                        fileContent = await getTextFromPDF(pdfBuffer);
+                        console.log(
+                            "Extracted text content length:",
+                            fileContent.length,
+                        );
+                    } catch (extractError) {
+                        console.error(
+                            "Error extracting PDF text:",
+                            extractError,
+                        );
+                    }
+                }
+
                 // Create form data with the file and include file info directly
                 const quizFormData = new FormData();
                 quizFormData.append("file", fileToUpload);
                 quizFormData.append("studySetId", studySetId.toString());
                 quizFormData.append("numQuestions", questionCount.toString());
-                quizFormData.append("fileName", fileName);
+                quizFormData.append("fileName", finalFileName);
                 quizFormData.append("fileType", fileToUpload.type);
 
                 // Add the file URL if available (for GPT Vision)
                 if (fileUrl) {
                     quizFormData.append("fileUrl", fileUrl);
+                    console.log(
+                        "Using signed URL for quiz generation:",
+                        fileUrl,
+                    );
+                }
+
+                // Add extracted content if available
+                if (fileContent) {
+                    quizFormData.append("fileContent", fileContent);
+                    console.log(
+                        "Added extracted text content for quiz generation",
+                    );
                 }
 
                 // Call the API to generate quiz questions

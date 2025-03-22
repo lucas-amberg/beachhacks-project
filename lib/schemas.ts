@@ -5,18 +5,13 @@ export const QuizQuestionSchema = z
     .object({
         question: z.string(),
         options: z.array(z.string()),
-        correct_answer: z.number().int().min(0).max(3).optional(),
-        answer: z.string().optional(),
+        answer: z.string(),
         category: z.string(),
         explanation: z.string().optional(),
     })
-    .refine(
-        (data) =>
-            data.correct_answer !== undefined || data.answer !== undefined,
-        {
-            message: "Either correct_answer or answer must be provided",
-        },
-    );
+    .refine((data) => data.answer !== undefined || data.answer !== undefined, {
+        message: "Either answer or answer must be provided",
+    });
 
 // Schema for a response containing multiple quiz questions
 // Updated to add minLength validation based on request
@@ -51,7 +46,7 @@ export type DbQuizQuestion = {
     study_set: number;
     question: string;
     options: string; // JSON string of options array
-    correct_answer: number;
+    answer: string;
     category: string;
     created_at?: string;
     category_obj?: Category;
