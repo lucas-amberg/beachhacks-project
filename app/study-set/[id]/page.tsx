@@ -13,6 +13,7 @@ import {
     Check,
     Eye,
     Trash2,
+    Loader2,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -43,6 +44,10 @@ import {
     AlertDialogHeader,
     AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
+import { extractTextFromFile, getStudySetFileContent } from "@/lib/file-utils";
+import { QuizQuestion } from "@/lib/schemas";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import QuizDisplay from "@/components/QuizDisplay";
 
 type StorageFile = {
     name: string;
@@ -72,10 +77,14 @@ export default function StudySetPage() {
     const [isConverting, setIsConverting] = useState(false);
     const [deleteId, setDeleteId] = useState<string | null>(null);
     const [isDeleting, setIsDeleting] = useState(false);
+    const [fileUrl, setFileUrl] = useState<string | null>(null);
+    const [isGeneratingQuiz, setIsGeneratingQuiz] = useState(false);
+    const [hasQuizQuestions, setHasQuizQuestions] = useState(false);
 
     useEffect(() => {
         fetchStudySet();
         fetchStudyMaterials();
+        checkForExistingQuestions();
     }, [id]);
 
     const fetchStudySet = async () => {
@@ -105,6 +114,17 @@ export default function StudySetPage() {
 
             setStudySet(data);
             setStudySetName(data.name || `Study Set #${id}`);
+
+            // If there's a file_path, get a URL for previewing
+            if (data.file_path) {
+                const { data: fileData } = await supabase.storage
+                    .from("files")
+                    .createSignedUrl(data.file_path, 60 * 60); // 1 hour expiry
+
+                if (fileData) {
+                    setFileUrl(fileData.signedUrl);
+                }
+            }
         } catch (error) {
             console.error("Error fetching study set:", error);
             toast.error("Failed to load study set");
@@ -384,6 +404,103 @@ export default function StudySetPage() {
             }
 
             toast.success("File uploaded successfully!");
+
+            // Generate quiz questions
+            try {
+                toast.info("Generating quiz questions...");
+
+                // Extract text content from the file
+                const fileContent = await extractTextFromFile(
+                    URL.createObjectURL(fileToUpload),
+                    fileToUpload.name,
+                    fileToUpload.type,
+                );
+
+                // Send content to API for quiz generation
+                const quizFormData = new FormData();
+                quizFormData.append("fileContent", fileContent);
+                quizFormData.append("fileName", fileName);
+                quizFormData.append("fileType", fileToUpload.type);
+                quizFormData.append("studySetId", id as string);
+
+                const quizResponse = await axios.post(
+                    "/api/generate-quiz",
+                    quizFormData,
+                );
+                const quizData = quizResponse.data;
+
+                if (quizData.questions && quizData.questions.length > 0) {
+                    // Process each generated question
+                    for (const question of quizData.questions) {
+                        // First, check if category exists
+                        const { data: categoryData, error: categoryError } =
+                            await supabase
+                                .from("categories")
+                                .select("name")
+                                .eq("name", question.category)
+                                .single();
+
+                        let categoryName;
+
+                        if (categoryError || !categoryData) {
+                            // Create new category
+                            const {
+                                data: newCategory,
+                                error: newCategoryError,
+                            } = await supabase
+                                .from("categories")
+                                .insert({ name: question.category })
+                                .select("name")
+                                .single();
+
+                            if (newCategoryError || !newCategory) {
+                                console.error(
+                                    "Error creating category:",
+                                    newCategoryError,
+                                );
+                                continue; // Skip this question if category creation fails
+                            }
+
+                            categoryName = newCategory.name;
+                        } else {
+                            categoryName = categoryData.name;
+                        }
+
+                        // Store the question
+                        const { error: questionError } = await supabase
+                            .from("quiz_questions")
+                            .insert({
+                                study_set: id,
+                                category: categoryName,
+                                question: question.question,
+                                options: JSON.stringify(question.options),
+                                correct_answer: Array.isArray(question.options)
+                                    ? question.options.findIndex(
+                                          (opt: string) =>
+                                              opt === question.answer,
+                                      )
+                                    : 0, // Default to first option if options not an array
+                                explanation: question.explanation || "",
+                            });
+
+                        if (questionError) {
+                            console.error(
+                                "Error creating quiz question:",
+                                questionError,
+                            );
+                        }
+                    }
+
+                    toast.success(
+                        `Created ${quizData.questions.length} quiz questions!`,
+                    );
+                }
+            } catch (quizError) {
+                console.error("Error generating quiz:", quizError);
+                toast.error("Failed to generate quiz questions");
+                // Continue with file upload success, quiz generation is a bonus
+            }
+
             setFile(null);
             fetchStudyMaterials();
         } catch (error) {
@@ -539,6 +656,125 @@ export default function StudySetPage() {
         setDeleteId(null);
     };
 
+    const checkForExistingQuestions = async () => {
+        try {
+            const { count, error } = await supabase
+                .from("quiz_questions")
+                .select("*", { count: "exact", head: true })
+                .eq("study_set", id);
+
+            if (error) throw error;
+
+            setHasQuizQuestions(count !== null && count > 0);
+        } catch (error) {
+            console.error("Error checking for quiz questions:", error);
+        }
+    };
+
+    const handleGenerateQuiz = async () => {
+        if (!studySet) return;
+
+        try {
+            setIsGeneratingQuiz(true);
+
+            // Get the file from Supabase storage
+            if (!studySet.file_path) {
+                toast.error("No file found for this study set");
+                return;
+            }
+
+            // Extract file name from the path
+            const fileName = studySet.file_path.split("/").pop() || "file.pdf";
+
+            // Guess file type from extension
+            const fileExtension =
+                fileName.split(".").pop()?.toLowerCase() || "pdf";
+            let fileType = "application/pdf"; // Default
+
+            if (fileExtension === "png") {
+                fileType = "image/png";
+            } else if (fileExtension === "docx") {
+                fileType =
+                    "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+            } else if (fileExtension === "pptx") {
+                fileType =
+                    "application/vnd.openxmlformats-officedocument.presentationml.presentation";
+            }
+
+            // Get a public URL for the file (for GPT Vision to access)
+            const { data: urlData } = await supabase.storage
+                .from("files")
+                .createSignedUrl(studySet.file_path, 60 * 60); // 1 hour expiry
+
+            const fileUrl = urlData?.signedUrl;
+
+            if (!fileUrl) {
+                toast.error("Failed to generate file URL");
+                setIsGeneratingQuiz(false);
+                return;
+            }
+
+            // Download the file from storage
+            const { data: fileData } = await supabase.storage
+                .from("files")
+                .download(studySet.file_path);
+
+            if (!fileData) {
+                toast.error("Failed to download file");
+                return;
+            }
+
+            // Create a File object from the blob data
+            const file = new File([fileData], fileName, { type: fileType });
+
+            // Extract text content from the file
+            let fileContent = "";
+            try {
+                fileContent = await extractTextFromFile(
+                    URL.createObjectURL(file),
+                    fileName,
+                    fileType,
+                );
+                console.log("Extracted content length:", fileContent.length);
+            } catch (extractError) {
+                console.error("Error extracting text:", extractError);
+                // Continue anyway, the API will try Vision API
+            }
+
+            // Create form data
+            const formData = new FormData();
+            formData.append("file", file);
+            formData.append("studySetId", id as string);
+            formData.append("numQuestions", "5");
+            formData.append("fileName", fileName);
+            formData.append("fileType", fileType);
+            formData.append("fileUrl", fileUrl);
+            formData.append("fileContent", fileContent);
+
+            toast.info("Analyzing document with AI...");
+
+            // Call the API to generate quiz questions
+            const response = await fetch("/api/generate-quiz", {
+                method: "POST",
+                body: formData,
+            });
+
+            const result = await response.json();
+
+            if (!response.ok) {
+                throw new Error(result.error || "Failed to generate quiz");
+            }
+
+            toast.success("Quiz generated successfully!");
+            setHasQuizQuestions(true);
+        } catch (error) {
+            console.error("Error generating quiz:", error);
+            toast.error("Failed to generate quiz. Please try again.");
+        } finally {
+            setIsGeneratingQuiz(false);
+        }
+    };
+
     if (!studySet) {
         return (
             <div className="flex justify-center items-center h-full">
@@ -548,182 +784,281 @@ export default function StudySetPage() {
     }
 
     return (
-        <div className="space-y-8">
-            <div className="flex justify-between items-center">
-                <div className="flex items-center gap-2">
-                    {isEditingName ? (
-                        <div className="flex items-center gap-2">
-                            <Input
-                                value={studySetName}
-                                onChange={(e) =>
-                                    setStudySetName(e.target.value)
-                                }
-                                className="text-2xl font-bold h-12 w-[300px]"
-                                placeholder="Enter study set name"
-                                disabled={isSavingName}
-                            />
-                            <Button
-                                size="icon"
-                                variant="outline"
-                                onClick={updateStudySetName}
-                                disabled={isSavingName}>
-                                <Check className="h-4 w-4" />
-                            </Button>
-                        </div>
-                    ) : (
-                        <>
-                            <h1 className="text-3xl font-bold">
-                                {studySet.name || `Study Set #${id}`}
-                            </h1>
-                            <Button
-                                size="icon"
-                                variant="ghost"
-                                onClick={() => setIsEditingName(true)}
-                                className="ml-2">
-                                <Pencil className="h-4 w-4" />
-                            </Button>
-                        </>
-                    )}
-                </div>
-                <p className="text-sm text-gray-500">
-                    Created: {new Date(studySet.created_at).toLocaleString()}
-                </p>
+        <div className="container mx-auto py-8 space-y-6">
+            <div className="flex items-center justify-between">
+                <h1 className="text-3xl font-bold">{studySet.name}</h1>
+                <Button onClick={() => router.push("/dashboard")}>
+                    Back to Dashboard
+                </Button>
             </div>
 
-            <div className="grid md:grid-cols-2 gap-8">
-                <Card>
-                    <CardHeader>
-                        <CardTitle>Upload Study Material</CardTitle>
-                        <CardDescription>
-                            Add new materials to this study set. PPTX and DOCX
-                            files will be automatically converted to PDF format.
-                        </CardDescription>
-                    </CardHeader>
-                    <CardContent>
-                        <div className="space-y-4">
-                            <div className="grid w-full max-w-sm items-center gap-1.5">
-                                <Input
-                                    id="file"
-                                    type="file"
-                                    onChange={handleFileChange}
-                                    accept=".pdf,.pptx,.png,.docx"
-                                    disabled={isUploading || isConverting}
-                                />
-                            </div>
-                            {file && (
-                                <div className="text-sm">
-                                    Selected file:{" "}
-                                    <span className="font-medium">
-                                        {file.name}
-                                    </span>
-                                </div>
-                            )}
-                            <Button
-                                onClick={handleUpload}
-                                disabled={!file || isUploading || isConverting}
-                                className="w-full flex items-center gap-2">
-                                <UploadCloud className="h-5 w-5" />
-                                {isUploading
-                                    ? "Uploading..."
-                                    : isConverting
-                                      ? "Converting..."
-                                      : "Upload File"}
-                            </Button>
-                        </div>
-                    </CardContent>
-                </Card>
+            <Tabs
+                defaultValue="material"
+                className="w-full">
+                <TabsList className="grid w-full grid-cols-2">
+                    <TabsTrigger value="material">Study Material</TabsTrigger>
+                    <TabsTrigger value="quiz">Quiz</TabsTrigger>
+                </TabsList>
 
-                <Card>
-                    <CardHeader>
-                        <CardTitle>Study Materials</CardTitle>
-                        <CardDescription>
-                            All materials in this study set
-                        </CardDescription>
-                    </CardHeader>
-                    <CardContent>
-                        {isLoading ? (
-                            <div className="flex justify-center items-center h-40">
-                                <p>Loading study materials...</p>
-                            </div>
-                        ) : materials.length === 0 ? (
-                            <div className="flex flex-col justify-center items-center h-40 text-center">
-                                <p className="text-gray-500">
-                                    No materials in this study set yet
+                <TabsContent
+                    value="material"
+                    className="space-y-4">
+                    <Card>
+                        <CardHeader>
+                            <CardTitle>Study Material</CardTitle>
+                        </CardHeader>
+                        <CardContent>
+                            {fileUrl ? (
+                                <div>
+                                    <div className="mb-4">
+                                        <Button
+                                            asChild
+                                            className="mb-4">
+                                            <a
+                                                href={fileUrl}
+                                                target="_blank"
+                                                rel="noopener noreferrer">
+                                                View
+                                            </a>
+                                        </Button>
+                                    </div>
+
+                                    {!hasQuizQuestions && (
+                                        <Button
+                                            onClick={handleGenerateQuiz}
+                                            disabled={isGeneratingQuiz}
+                                            className="mt-4">
+                                            {isGeneratingQuiz ? (
+                                                <>
+                                                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                                                    Generating Quiz...
+                                                </>
+                                            ) : (
+                                                "Generate Quiz"
+                                            )}
+                                        </Button>
+                                    )}
+                                </div>
+                            ) : (
+                                <p>No study material uploaded for this set.</p>
+                            )}
+                        </CardContent>
+                    </Card>
+                </TabsContent>
+
+                <TabsContent value="quiz">
+                    {hasQuizQuestions ? (
+                        <QuizDisplay studySetId={id as string} />
+                    ) : (
+                        <Card>
+                            <CardHeader>
+                                <CardTitle>Quiz</CardTitle>
+                            </CardHeader>
+                            <CardContent>
+                                <p className="mb-4">
+                                    No quiz available for this study set yet.
                                 </p>
-                                <p className="text-sm text-gray-400">
-                                    Upload your first file using the form
-                                </p>
+                                {fileUrl && (
+                                    <Button
+                                        onClick={handleGenerateQuiz}
+                                        disabled={isGeneratingQuiz}>
+                                        {isGeneratingQuiz ? (
+                                            <>
+                                                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                                                Generating Quiz...
+                                            </>
+                                        ) : (
+                                            "Generate Quiz"
+                                        )}
+                                    </Button>
+                                )}
+                            </CardContent>
+                        </Card>
+                    )}
+                </TabsContent>
+            </Tabs>
+
+            <div className="space-y-8">
+                <div className="flex justify-between items-center">
+                    <div className="flex items-center gap-2">
+                        {isEditingName ? (
+                            <div className="flex items-center gap-2">
+                                <Input
+                                    value={studySetName}
+                                    onChange={(e) =>
+                                        setStudySetName(e.target.value)
+                                    }
+                                    className="text-2xl font-bold h-12 w-[300px]"
+                                    placeholder="Enter study set name"
+                                    disabled={isSavingName}
+                                />
+                                <Button
+                                    size="icon"
+                                    variant="outline"
+                                    onClick={updateStudySetName}
+                                    disabled={isSavingName}>
+                                    <Check className="h-4 w-4" />
+                                </Button>
                             </div>
                         ) : (
-                            <div className="grid grid-cols-1 gap-4 max-h-[400px] overflow-y-auto pr-2">
-                                {materials.map((material) => (
-                                    <Card
-                                        key={material.id}
-                                        className="overflow-hidden border-gray-200">
-                                        <CardContent className="p-4">
-                                            <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
-                                                <div className="flex items-center gap-3 min-w-0 w-full md:w-auto">
-                                                    <div className="flex-shrink-0 p-1.5 bg-gray-50 rounded">
-                                                        {getFileIcon(
-                                                            material.type,
-                                                        )}
-                                                    </div>
-                                                    <div className="min-w-0 flex-1 md:max-w-[300px]">
-                                                        <p className="font-medium truncate">
-                                                            {material.name}
-                                                        </p>
-                                                        <p className="text-xs text-gray-500">
-                                                            {new Date(
-                                                                material.created_at,
-                                                            ).toLocaleString()}
-                                                        </p>
-                                                    </div>
-                                                </div>
-                                                <div className="flex-shrink-0 flex flex-row gap-2 w-full md:w-auto justify-start md:justify-end">
-                                                    <Button
-                                                        variant="outline"
-                                                        size="sm"
-                                                        onClick={() =>
-                                                            handlePreview(
-                                                                material,
-                                                            )
-                                                        }
-                                                        className="gap-1 flex-none">
-                                                        <Eye className="h-4 w-4" />
-                                                        View
-                                                    </Button>
-                                                    <Button
-                                                        variant="outline"
-                                                        size="sm"
-                                                        onClick={() =>
-                                                            handleDownload(
-                                                                material,
-                                                            )
-                                                        }
-                                                        className="gap-1 flex-none">
-                                                        Download
-                                                    </Button>
-                                                    <Button
-                                                        variant="outline"
-                                                        size="sm"
-                                                        onClick={() =>
-                                                            handleDelete(
-                                                                material.id,
-                                                            )
-                                                        }
-                                                        className="text-red-500 hover:text-red-700 hover:bg-red-50 gap-1 flex-none">
-                                                        <Trash2 className="h-4 w-4" />
-                                                        Delete
-                                                    </Button>
-                                                </div>
-                                            </div>
-                                        </CardContent>
-                                    </Card>
-                                ))}
-                            </div>
+                            <>
+                                <h1 className="text-3xl font-bold">
+                                    {studySet.name || `Study Set #${id}`}
+                                </h1>
+                                <Button
+                                    size="icon"
+                                    variant="ghost"
+                                    onClick={() => setIsEditingName(true)}
+                                    className="ml-2">
+                                    <Pencil className="h-4 w-4" />
+                                </Button>
+                            </>
                         )}
-                    </CardContent>
-                </Card>
+                    </div>
+                    <p className="text-sm text-gray-500">
+                        Created:{" "}
+                        {new Date(studySet.created_at).toLocaleString()}
+                    </p>
+                </div>
+
+                <div className="grid md:grid-cols-2 gap-8">
+                    <Card>
+                        <CardHeader>
+                            <CardTitle>Upload Study Material</CardTitle>
+                            <CardDescription>
+                                Add new materials to this study set. PPTX and
+                                DOCX files will be automatically converted to
+                                PDF format.
+                            </CardDescription>
+                        </CardHeader>
+                        <CardContent>
+                            <div className="space-y-4">
+                                <div className="grid w-full max-w-sm items-center gap-1.5">
+                                    <Input
+                                        id="file"
+                                        type="file"
+                                        onChange={handleFileChange}
+                                        accept=".pdf,.pptx,.png,.docx"
+                                        disabled={isUploading || isConverting}
+                                    />
+                                </div>
+                                {file && (
+                                    <div className="text-sm">
+                                        Selected file:{" "}
+                                        <span className="font-medium">
+                                            {file.name}
+                                        </span>
+                                    </div>
+                                )}
+                                <Button
+                                    onClick={handleUpload}
+                                    disabled={
+                                        !file || isUploading || isConverting
+                                    }
+                                    className="w-full flex items-center gap-2">
+                                    <UploadCloud className="h-5 w-5" />
+                                    {isUploading
+                                        ? "Uploading..."
+                                        : isConverting
+                                          ? "Converting..."
+                                          : "Upload File"}
+                                </Button>
+                            </div>
+                        </CardContent>
+                    </Card>
+
+                    <Card>
+                        <CardHeader>
+                            <CardTitle>Study Materials</CardTitle>
+                            <CardDescription>
+                                All materials in this study set
+                            </CardDescription>
+                        </CardHeader>
+                        <CardContent>
+                            {isLoading ? (
+                                <div className="flex justify-center items-center h-40">
+                                    <p>Loading study materials...</p>
+                                </div>
+                            ) : materials.length === 0 ? (
+                                <div className="flex flex-col justify-center items-center h-40 text-center">
+                                    <p className="text-gray-500">
+                                        No materials in this study set yet
+                                    </p>
+                                    <p className="text-sm text-gray-400">
+                                        Upload your first file using the form
+                                    </p>
+                                </div>
+                            ) : (
+                                <div className="grid grid-cols-1 gap-4 max-h-[400px] overflow-y-auto pr-2">
+                                    {materials.map((material) => (
+                                        <Card
+                                            key={material.id}
+                                            className="overflow-hidden border-gray-200">
+                                            <CardContent className="p-4">
+                                                <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+                                                    <div className="flex items-center gap-3 min-w-0 w-full md:w-auto">
+                                                        <div className="flex-shrink-0 p-1.5 bg-gray-50 rounded">
+                                                            {getFileIcon(
+                                                                material.type,
+                                                            )}
+                                                        </div>
+                                                        <div className="min-w-0 flex-1 md:max-w-[300px]">
+                                                            <p className="font-medium truncate">
+                                                                {material.name}
+                                                            </p>
+                                                            <p className="text-xs text-gray-500">
+                                                                {new Date(
+                                                                    material.created_at,
+                                                                ).toLocaleString()}
+                                                            </p>
+                                                        </div>
+                                                    </div>
+                                                    <div className="flex-shrink-0 flex flex-row gap-2 w-full md:w-auto justify-start md:justify-end">
+                                                        <Button
+                                                            variant="outline"
+                                                            size="sm"
+                                                            onClick={() =>
+                                                                handlePreview(
+                                                                    material,
+                                                                )
+                                                            }
+                                                            className="gap-1 flex-none">
+                                                            <Eye className="h-4 w-4" />
+                                                            View
+                                                        </Button>
+                                                        <Button
+                                                            variant="outline"
+                                                            size="sm"
+                                                            onClick={() =>
+                                                                handleDownload(
+                                                                    material,
+                                                                )
+                                                            }
+                                                            className="gap-1 flex-none">
+                                                            Download
+                                                        </Button>
+                                                        <Button
+                                                            variant="outline"
+                                                            size="sm"
+                                                            onClick={() =>
+                                                                handleDelete(
+                                                                    material.id,
+                                                                )
+                                                            }
+                                                            className="text-red-500 hover:text-red-700 hover:bg-red-50 gap-1 flex-none">
+                                                            <Trash2 className="h-4 w-4" />
+                                                            Delete
+                                                        </Button>
+                                                    </div>
+                                                </div>
+                                            </CardContent>
+                                        </Card>
+                                    ))}
+                                </div>
+                            )}
+                        </CardContent>
+                    </Card>
+                </div>
             </div>
 
             <AlertDialog
