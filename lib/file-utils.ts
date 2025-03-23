@@ -95,9 +95,18 @@ export async function getStudySetFileContent(
         }
 
         // Get a public URL for the file
+        // Always use study-materials bucket
+        let bucketName = "study-materials";
+        let filePath = studySet.file_path;
+
+        // If for some reason the path still includes a bucket prefix, handle it
+        if (studySet.file_path.includes("study-materials/")) {
+            filePath = studySet.file_path.substring("study-materials/".length);
+        }
+
         const { data: fileData } = await supabase.storage
-            .from("files")
-            .createSignedUrl(studySet.file_path, 60); // 60 seconds expiry
+            .from(bucketName)
+            .createSignedUrl(filePath, 60); // 60 seconds expiry
 
         if (!fileData?.signedUrl) {
             throw new Error("Failed to generate file URL");

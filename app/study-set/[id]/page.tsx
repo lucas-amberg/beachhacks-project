@@ -188,12 +188,27 @@ export default function StudySetPage() {
 
             // If there's a file_path, get a URL for previewing
             if (data.file_path) {
-                const { data: fileData } = await supabase.storage
-                    .from("files")
-                    .createSignedUrl(data.file_path, 60 * 60); // 1 hour expiry
+                try {
+                    // Always use study-materials bucket for file paths
+                    let filePath = data.file_path;
 
-                if (fileData) {
-                    setFileUrl(fileData.signedUrl);
+                    // Handle paths that might have the bucket name prefixed
+                    if (data.file_path.includes("study-materials/")) {
+                        filePath = data.file_path.substring(
+                            "study-materials/".length,
+                        );
+                    }
+
+                    const { data: fileData } = await supabase.storage
+                        .from("study-materials")
+                        .createSignedUrl(filePath, 60 * 60); // 1 hour expiry
+
+                    if (fileData) {
+                        setFileUrl(fileData.signedUrl);
+                    }
+                } catch (fileError) {
+                    console.error("Error getting file URL:", fileError);
+                    // Continue anyway, we just won't show the file preview
                 }
             }
         } catch (error) {
@@ -643,18 +658,29 @@ export default function StudySetPage() {
                 // Step 4: Also upload file to files bucket for GPT Vision access
                 const filesPath = `${id}/${finalFileName}`;
 
-                // Upload to files bucket
-                const { error: filesUploadError } = await supabase.storage
-                    .from("files")
-                    .upload(filesPath, fileToUpload);
+                // Upload to files bucket but handle failures gracefully
+                try {
+                    // Upload to files bucket
+                    const { error: filesUploadError } = await supabase.storage
+                        .from("files")
+                        .upload(filesPath, fileToUpload);
 
-                if (filesUploadError) {
+                    if (filesUploadError) {
+                        console.error(
+                            "Warning: Could not upload to files bucket:",
+                            filesUploadError.message ||
+                                JSON.stringify(filesUploadError),
+                        );
+                        // Continue anyway - we'll just use study-materials bucket
+                    } else {
+                        console.log("Successfully uploaded to files bucket");
+                    }
+                } catch (filesError) {
                     console.error(
-                        "Error uploading to files bucket:",
-                        filesUploadError.message ||
-                            JSON.stringify(filesUploadError),
+                        "Error with files bucket upload:",
+                        filesError,
                     );
-                    // Continue anyway since we have it in study-materials
+                    // Continue with study-materials bucket only
                 }
 
                 toast.success("File uploaded successfully!");
@@ -1063,38 +1089,25 @@ export default function StudySetPage() {
                 const isImageFile = file.type.includes("image/");
 
                 if (isImageFile || isHeicFile(file)) {
-                    // Create a path in the files bucket
-                    const filesPath = `${id}/${finalFileName}`;
+                    // Get a signed URL directly from the study-materials bucket
+                    const { data: urlData, error: urlError } =
+                        await supabase.storage
+                            .from("study-materials")
+                            .createSignedUrl(
+                                `${material.id}/${material.name}`,
+                                60 * 60,
+                            ); // 1 hour expiry
 
-                    // Upload to files bucket for Vision API access
-                    const { error: filesUploadError } = await supabase.storage
-                        .from("files")
-                        .upload(filesPath, file, { upsert: true });
-
-                    if (filesUploadError) {
-                        console.error(
-                            "Error uploading to files bucket:",
-                            filesUploadError.message ||
-                                JSON.stringify(filesUploadError),
-                        );
+                    if (urlError) {
+                        console.error("URL generation error:", urlError);
                     } else {
-                        // Get a signed URL for the file (for Vision API)
-                        const { data: urlData, error: urlError } =
-                            await supabase.storage
-                                .from("files")
-                                .createSignedUrl(filesPath, 60 * 60); // 1 hour expiry
-
-                        if (urlError) {
-                            console.error("URL generation error:", urlError);
-                        } else {
-                            fileUrl = urlData?.signedUrl;
-                            console.log(
-                                `Got signed URL for files bucket: ${fileUrl ? "yes" : "no"}`,
-                            );
-                        }
+                        fileUrl = urlData?.signedUrl;
+                        console.log(
+                            `Got signed URL for study-materials: ${fileUrl ? "yes" : "no"}`,
+                        );
                     }
                 } else {
-                    // For non-image files, still try to get a signed URL from study-materials
+                    // For non-image files, also use study-materials bucket
                     const { data: urlData, error: urlError } =
                         await supabase.storage
                             .from("study-materials")

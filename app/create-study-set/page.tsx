@@ -305,29 +305,25 @@ export default function CreateStudySetPage() {
                 );
             }
 
-            // Step 5: Also upload file to files folder and update study set record
-            const filesPath = `${studySetId}/${finalFileName}`;
-
-            // Upload to files bucket
-            const { error: filesUploadError } = await supabase.storage
-                .from("files")
-                .upload(filesPath, fileToUpload);
-
-            if (filesUploadError) {
-                console.error(
-                    "Error uploading to files bucket:",
-                    filesUploadError.message ||
-                        JSON.stringify(filesUploadError),
-                );
-                // Continue anyway since we have it in study-materials
-            } else {
-                // Update study set with file path only
+            // Step 5: We only need the file in the study-materials bucket, so just update the record
+            try {
+                // Update study set with the path to the file in study-materials bucket
                 await supabase
                     .from("study_sets")
                     .update({
-                        file_path: filesPath,
+                        file_path: filePath, // Just use the path in study-materials
+                        file_name: finalFileName,
+                        file_type: fileToUpload.type,
                     })
                     .eq("id", studySetId);
+
+                console.log(`Updated study set with file path: ${filePath}`);
+            } catch (updateError) {
+                console.error(
+                    "Error updating study set with file path:",
+                    updateError,
+                );
+                // Continue anyway since we have the file in study-materials
             }
 
             // Step 6: Generate quiz questions
@@ -337,8 +333,8 @@ export default function CreateStudySetPage() {
             try {
                 // Get a public URL for the file (for GPT Vision to access)
                 const { data: urlData } = await supabase.storage
-                    .from("files")
-                    .createSignedUrl(filesPath, 60 * 60); // 1 hour expiry
+                    .from("study-materials")
+                    .createSignedUrl(filePath, 60 * 60); // 1 hour expiry
 
                 const fileUrl = urlData?.signedUrl;
 
