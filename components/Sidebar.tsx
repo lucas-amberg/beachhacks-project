@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import Link from "next/link";
 import supabase from "@/lib/supabase";
-import { PlusSquare } from "lucide-react";
+import { PlusSquare, Tag } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { StudySet } from "@/lib/supabase";
@@ -100,6 +100,20 @@ export default function Sidebar() {
             <div className="p-4 border-b">
                 <h2 className="text-xl font-bold">Study Sets</h2>
             </div>
+            
+            {/* Categories Link */}
+            <div className="p-4 border-b">
+                <Link
+                    href="/categories"
+                    className={`flex items-center gap-2 p-2 rounded-md transition-colors hover:bg-slate-200 dark:hover:bg-slate-800 ${
+                        pathname === "/categories" ? "bg-slate-200 dark:bg-slate-800" : ""
+                    }`}
+                >
+                    <Tag className="h-4 w-4" />
+                    <span>Browse Categories</span>
+                </Link>
+            </div>
+
             <div className="flex-1 overflow-auto">
                 {isLoading ? (
                     <div className="p-4 space-y-2">
