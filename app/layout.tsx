@@ -7,8 +7,12 @@ import Sidebar from "@/components/Sidebar";
 const inter = Inter({ subsets: ["latin"] });
 
 export const metadata: Metadata = {
-    title: "Study Materials Manager",
-    description: "Manage your study materials easily",
+    title: "Study Sets - AI-Powered Learning",
+    description: "Create AI-generated quiz questions from your study materials",
+    icons: {
+        icon: "/study-sets-logo.png",
+        apple: "/study-sets-logo.png",
+    },
 };
 
 export default function RootLayout({

@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import supabase from "@/lib/supabase";
 import { v4 as uuidv4 } from "uuid";
+import { motion, AnimatePresence } from "framer-motion";
 import {
     UploadCloud,
     FileIcon,
@@ -58,8 +59,8 @@ import { extractTextFromFile, getStudySetFileContent } from "@/lib/file-utils";
 import { QuizQuestion } from "@/lib/schemas";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import QuizDisplay from "@/app/components/QuizDisplay";
-import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
+import { Badge } from "@/components/ui/badge";
 
 type StorageFile = {
     name: string;
@@ -108,11 +109,19 @@ export default function StudySetPage() {
         number | string
     >(5);
     const [selectedQuestion, setSelectedQuestion] = useState<any | null>(null);
+    const [showQuizResults, setShowQuizResults] = useState(false);
+    const [lastQuizScore, setLastQuizScore] = useState<{
+        score: number;
+        total: number;
+    } | null>(null);
+    const [categoryScores, setCategoryScores] = useState<any[]>([]);
+    const [studySetScore, setStudySetScore] = useState<any | null>(null);
 
     useEffect(() => {
         fetchStudySet();
         fetchStudyMaterials();
         fetchQuizQuestions();
+        fetchScores();
     }, [id]);
 
     const fetchStudySet = async () => {
@@ -322,6 +331,72 @@ export default function StudySetPage() {
         } catch (error) {
             console.error("Error fetching quiz questions:", error);
             toast.error("Failed to load quiz questions");
+        }
+    };
+
+    const fetchScores = async () => {
+        try {
+            // Fetch study set score
+            const { data: studySetData, error: studySetError } = await supabase
+                .from("study_set_scores")
+                .select("*")
+                .eq("id", id)
+                .single();
+
+            if (studySetError && studySetError.code !== "PGRST116") {
+                console.error("Error fetching study set score:", studySetError);
+            } else if (studySetData) {
+                console.log("Study set score data:", studySetData);
+                setStudySetScore(studySetData);
+            }
+
+            // Fetch category scores for this study set
+            const { data: quizData, error: quizError } = await supabase
+                .from("quiz_questions")
+                .select("category")
+                .eq("study_set", id);
+
+            if (quizError) {
+                console.error("Error fetching quiz categories:", quizError);
+                return;
+            }
+
+            console.log(
+                "Raw quiz categories:",
+                quizData.map((q) => q.category),
+            );
+
+            // Extract unique categories
+            const categories = quizData
+                .map((q) => q.category)
+                .filter(
+                    (value, index, self) =>
+                        value && self.indexOf(value) === index,
+                );
+
+            console.log("Unique categories for study set:", categories);
+
+            if (categories.length > 0) {
+                const { data: catScores, error: catError } = await supabase
+                    .from("category_scores")
+                    .select("*")
+                    .in("category_name", categories);
+
+                if (catError) {
+                    console.error("Error fetching category scores:", catError);
+                } else if (catScores && catScores.length > 0) {
+                    console.log("Retrieved category scores:", catScores);
+                    setCategoryScores(catScores);
+                } else {
+                    console.log("No category scores found");
+                    setCategoryScores([]);
+                }
+            } else {
+                console.log("No categories found for this study set");
+                setCategoryScores([]);
+            }
+        } catch (error) {
+            console.error("Error fetching scores:", error);
         }
     };
 
@@ -946,21 +1021,33 @@ export default function StudySetPage() {
     if (showQuiz) {
         return (
             <div className="container mx-auto py-8 space-y-6">
-                <div className="flex justify-between items-center mb-6">
+                <motion.div
+                    initial={{ opacity: 0, y: -10 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ duration: 0.5 }}
+                    className="flex justify-between items-center mb-6">
                     <h1 className="text-3xl font-bold">
                         {studySet.name} - Quiz
                     </h1>
-                    <Button onClick={() => setShowQuiz(false)}>
-                        Back to Study Set
-                    </Button>
-                </div>
+                    <motion.div
+                        whileHover={{ scale: 1.05 }}
+                        whileTap={{ scale: 0.95 }}>
+                        <Button onClick={() => setShowQuiz(false)}>
+                            Back to Study Set
+                        </Button>
+                    </motion.div>
+                </motion.div>
                 <QuizDisplay
                     studySetId={id as string}
                     questions={
                         quizQuestions2.length > 0 ? quizQuestions2 : undefined
                     }
-                    onComplete={() => {
+                    onComplete={(score, total) => {
+                        // Don't show quiz results anymore
+                        // setLastQuizScore({ score, total });
+                        // setShowQuizResults(true);
                         setShowQuiz(false);
+                        fetchScores(); // Still refresh scores after quiz completion
                     }}
                 />
             </div>
@@ -970,7 +1057,11 @@ export default function StudySetPage() {
     return (
         <div className="container mx-auto py-8 space-y-6">
             {/* Header with study set name */}
-            <div className="flex items-center justify-between">
+            <motion.div
+                initial={{ opacity: 0, y: -20 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ duration: 0.6 }}
+                className="flex items-center justify-between">
                 <div className="flex items-center gap-2">
                     {isEditingName ? (
                         <div className="flex items-center gap-2">
@@ -983,245 +1074,386 @@ export default function StudySetPage() {
                                 placeholder="Enter study set name"
                                 disabled={isSavingName}
                             />
-                            <Button
-                                size="icon"
-                                variant="outline"
-                                onClick={updateStudySetName}
-                                disabled={isSavingName}>
-                                <Check className="h-4 w-4" />
-                            </Button>
+                            <motion.div
+                                whileHover={{ scale: 1.1 }}
+                                whileTap={{ scale: 0.9 }}>
+                                <Button
+                                    size="icon"
+                                    variant="outline"
+                                    onClick={updateStudySetName}
+                                    disabled={isSavingName}>
+                                    <Check className="h-4 w-4" />
+                                </Button>
+                            </motion.div>
                         </div>
                     ) : (
                         <>
                             <h1 className="text-3xl font-bold">
                                 {studySet.name || `Study Set #${id}`}
                             </h1>
-                            <Button
-                                size="icon"
-                                variant="ghost"
-                                onClick={() => setIsEditingName(true)}
-                                className="ml-2">
-                                <Pencil className="h-4 w-4" />
-                            </Button>
+                            <motion.div
+                                whileHover={{ scale: 1.1 }}
+                                whileTap={{ scale: 0.9 }}>
+                                <Button
+                                    size="icon"
+                                    variant="ghost"
+                                    onClick={() => setIsEditingName(true)}
+                                    className="ml-2">
+                                    <Pencil className="h-4 w-4" />
+                                </Button>
+                            </motion.div>
                         </>
                     )}
                 </div>
-                <Button onClick={() => router.push("/dashboard")}>
-                    Back to Dashboard
-                </Button>
-            </div>
+                <motion.div
+                    whileHover={{ scale: 1.05 }}
+                    whileTap={{ scale: 0.95 }}>
+                    <Button onClick={() => router.push("/")}>
+                        Back to Dashboard
+                    </Button>
+                </motion.div>
+            </motion.div>
 
             {/* Grid layout */}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                 {/* Top left: Quiz card */}
-                <Card className="h-full">
-                    <CardHeader>
-                        <CardTitle>Quiz</CardTitle>
-                        <CardDescription>
-                            Test your knowledge with generated questions
-                        </CardDescription>
-                    </CardHeader>
-                    <CardContent className="space-y-4">
-                        {hasQuizQuestions ? (
-                            <div className="space-y-4">
-                                <p>
-                                    This study set has {quizQuestions.length}{" "}
-                                    questions available.
-                                </p>
-                                <div className="flex flex-col space-y-3">
-                                    <label
-                                        htmlFor="questionCount"
-                                        className="text-sm font-medium">
-                                        Number of questions for quiz:
-                                    </label>
-                                    <div className="flex items-center space-x-2">
-                                        <Input
-                                            id="questionCount"
-                                            type="number"
-                                            value={selectedQuestionCount}
-                                            onChange={(e) => {
-                                                const value = e.target.value;
-                                                setSelectedQuestionCount(
-                                                    value === ""
-                                                        ? ""
-                                                        : Number(value),
-                                                );
-                                            }}
-                                            className="w-24"
-                                        />
-                                        <span className="text-sm text-gray-500">
-                                            of {quizQuestions.length} total
-                                        </span>
-                                    </div>
-                                    <p className="text-xs text-gray-500">
-                                        Enter how many questions you want in
-                                        your quiz.
+                <motion.div
+                    initial={{ opacity: 0, x: -20 }}
+                    animate={{ opacity: 1, x: 0 }}
+                    transition={{ duration: 0.6, delay: 0.2 }}>
+                    <Card className="h-full">
+                        <CardHeader>
+                            <CardTitle>Quiz</CardTitle>
+                            <CardDescription>
+                                Test your knowledge with generated questions
+                            </CardDescription>
+                        </CardHeader>
+                        <CardContent className="space-y-4">
+                            {hasQuizQuestions ? (
+                                <motion.div
+                                    className="space-y-4"
+                                    initial={{ opacity: 0 }}
+                                    animate={{ opacity: 1 }}
+                                    transition={{ duration: 0.4, delay: 0.4 }}>
+                                    <p>
+                                        This study set has{" "}
+                                        {quizQuestions.length} questions
+                                        available.
                                     </p>
-                                </div>
-                                <Button
-                                    onClick={startQuiz}
-                                    className="w-full">
-                                    Take Quiz
-                                </Button>
-                            </div>
-                        ) : (
-                            <div className="text-center py-4">
-                                <p className="mb-4">
-                                    No quiz questions available yet.
-                                </p>
-                                {materials.length > 0 && (
-                                    <Button
-                                        onClick={() =>
-                                            setShowMaterialsModal(true)
-                                        }
-                                        disabled={isGeneratingQuiz}>
-                                        Generate Questions
-                                    </Button>
-                                )}
-                            </div>
-                        )}
-                    </CardContent>
-                </Card>
+
+                                    {/* Study set performance stats */}
+                                    {studySetScore &&
+                                        studySetScore.questions_solved > 0 && (
+                                            <motion.div
+                                                className="border rounded-lg p-3 bg-slate-50"
+                                                initial={{ opacity: 0, y: 10 }}
+                                                animate={{ opacity: 1, y: 0 }}
+                                                transition={{
+                                                    duration: 0.5,
+                                                    delay: 0.5,
+                                                }}>
+                                                <h3 className="text-sm font-medium mb-2">
+                                                    Performance Stats
+                                                </h3>
+                                                <div className="grid grid-cols-2 gap-2">
+                                                    <div>
+                                                        <p className="text-xs text-gray-500">
+                                                            Correct
+                                                        </p>
+                                                        <p className="font-medium">
+                                                            {
+                                                                studySetScore.questions_right
+                                                            }{" "}
+                                                            /{" "}
+                                                            {
+                                                                studySetScore.questions_solved
+                                                            }
+                                                        </p>
+                                                    </div>
+                                                    <div>
+                                                        <p className="text-xs text-gray-500">
+                                                            Success Rate
+                                                        </p>
+                                                        <p className="font-medium">
+                                                            {(
+                                                                (studySetScore.questions_right /
+                                                                    studySetScore.questions_solved) *
+                                                                100
+                                                            ).toFixed(1)}
+                                                            %
+                                                        </p>
+                                                    </div>
+                                                </div>
+                                            </motion.div>
+                                        )}
+
+                                    <div className="flex flex-col space-y-3">
+                                        <label
+                                            htmlFor="questionCount"
+                                            className="text-sm font-medium">
+                                            Number of questions for quiz:
+                                        </label>
+                                        <div className="flex items-center space-x-2">
+                                            <Input
+                                                id="questionCount"
+                                                type="number"
+                                                value={selectedQuestionCount}
+                                                onChange={(e) => {
+                                                    const value =
+                                                        e.target.value;
+                                                    setSelectedQuestionCount(
+                                                        value === ""
+                                                            ? ""
+                                                            : Number(value),
+                                                    );
+                                                }}
+                                                className="w-24"
+                                            />
+                                            <span className="text-sm text-gray-500">
+                                                of {quizQuestions.length} total
+                                            </span>
+                                        </div>
+                                        <p className="text-xs text-gray-500">
+                                            Enter how many questions you want in
+                                            your quiz.
+                                        </p>
+                                    </div>
+                                    <motion.div
+                                        whileHover={{ scale: 1.03 }}
+                                        whileTap={{ scale: 0.97 }}>
+                                        <Button
+                                            onClick={startQuiz}
+                                            className="w-full">
+                                            Take Quiz
+                                        </Button>
+                                    </motion.div>
+                                </motion.div>
+                            ) : (
+                                <motion.div
+                                    className="text-center py-4"
+                                    initial={{ opacity: 0 }}
+                                    animate={{ opacity: 1 }}
+                                    transition={{ duration: 0.4, delay: 0.3 }}>
+                                    <p className="mb-4">
+                                        No quiz questions available yet.
+                                    </p>
+                                    {materials.length > 0 && (
+                                        <motion.div
+                                            whileHover={{ scale: 1.05 }}
+                                            whileTap={{ scale: 0.95 }}>
+                                            <Button
+                                                onClick={() =>
+                                                    setShowMaterialsModal(true)
+                                                }
+                                                disabled={isGeneratingQuiz}>
+                                                Generate Questions
+                                            </Button>
+                                        </motion.div>
+                                    )}
+                                </motion.div>
+                            )}
+                        </CardContent>
+                    </Card>
+                </motion.div>
 
                 {/* Top right: Study materials/generate/add document */}
-                <Card className="h-full">
-                    <CardHeader>
-                        <CardTitle>Study Materials</CardTitle>
-                        <CardDescription>
-                            Manage your documents and generate questions
-                        </CardDescription>
-                    </CardHeader>
-                    <CardContent className="space-y-4">
-                        <div className="flex flex-col space-y-4">
-                            <div className="flex justify-between items-center">
-                                <p className="text-sm">
-                                    {materials.length === 0
-                                        ? "No study materials uploaded yet"
-                                        : `${materials.length} study materials available`}
-                                </p>
-                                {materials.length > 0 && (
-                                    <Button
-                                        variant="outline"
-                                        size="sm"
-                                        onClick={() =>
-                                            setShowMaterialsModal(true)
-                                        }
-                                        className="flex items-center gap-2">
-                                        <FolderOpen className="h-4 w-4" />
-                                        View Materials
-                                    </Button>
-                                )}
-                            </div>
+                <motion.div
+                    initial={{ opacity: 0, x: 20 }}
+                    animate={{ opacity: 1, x: 0 }}
+                    transition={{ duration: 0.6, delay: 0.3 }}>
+                    <Card className="h-full">
+                        <CardHeader>
+                            <CardTitle>Study Materials</CardTitle>
+                            <CardDescription>
+                                Manage your documents and generate questions
+                            </CardDescription>
+                        </CardHeader>
+                        <CardContent className="space-y-4">
+                            <motion.div
+                                className="flex flex-col space-y-4"
+                                initial={{ opacity: 0 }}
+                                animate={{ opacity: 1 }}
+                                transition={{ duration: 0.4, delay: 0.4 }}>
+                                <div className="flex justify-between items-center">
+                                    <p className="text-sm">
+                                        {materials.length === 0
+                                            ? "No study materials uploaded yet"
+                                            : `${materials.length} study materials available`}
+                                    </p>
+                                    {materials.length > 0 && (
+                                        <motion.div
+                                            whileHover={{ scale: 1.05 }}
+                                            whileTap={{ scale: 0.95 }}>
+                                            <Button
+                                                variant="outline"
+                                                size="sm"
+                                                onClick={() =>
+                                                    setShowMaterialsModal(true)
+                                                }
+                                                className="flex items-center gap-2">
+                                                <FolderOpen className="h-4 w-4" />
+                                                View Materials
+                                            </Button>
+                                        </motion.div>
+                                    )}
+                                </div>
 
-                            <div className="border-t pt-4">
-                                <p className="font-medium mb-3">
-                                    Upload New Material
-                                </p>
-                                <div className="grid w-full items-center gap-1.5">
-                                    <Input
-                                        id="file"
-                                        type="file"
-                                        onChange={handleFileChange}
-                                        accept=".pdf,.pptx,.png,.docx"
-                                        disabled={isUploading || isConverting}
-                                    />
-                                </div>
-                                {file && (
-                                    <div className="text-sm mt-2">
-                                        Selected file:{" "}
-                                        <span className="font-medium">
-                                            {file.name}
-                                        </span>
+                                <div className="border-t pt-4">
+                                    <p className="font-medium mb-3">
+                                        Upload New Material
+                                    </p>
+                                    <div className="grid w-full items-center gap-1.5">
+                                        <Input
+                                            id="file"
+                                            type="file"
+                                            onChange={handleFileChange}
+                                            accept=".pdf,.pptx,.png,.docx"
+                                            disabled={
+                                                isUploading || isConverting
+                                            }
+                                        />
                                     </div>
-                                )}
-                                <div className="flex items-center space-x-2 mt-3">
-                                    <Checkbox
-                                        id="generateQuiz"
-                                        checked={shouldGenerateQuiz}
-                                        onCheckedChange={(checked) =>
-                                            setShouldGenerateQuiz(
-                                                checked === true,
-                                            )
-                                        }
-                                    />
-                                    <label
-                                        htmlFor="generateQuiz"
-                                        className="text-sm">
-                                        Generate quiz questions from this file
-                                    </label>
+                                    {file && (
+                                        <motion.div
+                                            className="text-sm mt-2"
+                                            initial={{ opacity: 0, y: 5 }}
+                                            animate={{ opacity: 1, y: 0 }}
+                                            transition={{ duration: 0.3 }}>
+                                            Selected file:{" "}
+                                            <span className="font-medium">
+                                                {file.name}
+                                            </span>
+                                        </motion.div>
+                                    )}
+                                    <div className="flex items-center space-x-2 mt-3">
+                                        <Checkbox
+                                            id="generateQuiz"
+                                            checked={shouldGenerateQuiz}
+                                            onCheckedChange={(checked) =>
+                                                setShouldGenerateQuiz(
+                                                    checked === true,
+                                                )
+                                            }
+                                        />
+                                        <label
+                                            htmlFor="generateQuiz"
+                                            className="text-sm">
+                                            Generate quiz questions from this
+                                            file
+                                        </label>
+                                    </div>
                                 </div>
-                            </div>
-                        </div>
-                    </CardContent>
-                    <CardFooter>
-                        <Button
-                            onClick={handleUpload}
-                            disabled={!file || isUploading || isConverting}
-                            className="w-full flex items-center gap-2">
-                            <UploadCloud className="h-5 w-5" />
-                            {isUploading
-                                ? "Uploading..."
-                                : isConverting
-                                  ? "Converting..."
-                                  : "Upload File"}
-                        </Button>
-                    </CardFooter>
-                </Card>
+                            </motion.div>
+                        </CardContent>
+                        <CardFooter>
+                            <motion.div
+                                className="w-full"
+                                whileHover={
+                                    !isUploading && !isConverting && file
+                                        ? { scale: 1.03 }
+                                        : {}
+                                }
+                                whileTap={
+                                    !isUploading && !isConverting && file
+                                        ? { scale: 0.97 }
+                                        : {}
+                                }>
+                                <Button
+                                    onClick={handleUpload}
+                                    disabled={
+                                        !file || isUploading || isConverting
+                                    }
+                                    className="w-full flex items-center gap-2">
+                                    <UploadCloud className="h-5 w-5" />
+                                    {isUploading
+                                        ? "Uploading..."
+                                        : isConverting
+                                          ? "Converting..."
+                                          : "Upload File"}
+                                </Button>
+                            </motion.div>
+                        </CardFooter>
+                    </Card>
+                </motion.div>
             </div>
 
             {/* Bottom: Question set */}
             {quizQuestions.length > 0 && (
-                <Card className="col-span-1 md:col-span-2">
-                    <CardHeader>
-                        <CardTitle>Quiz Questions</CardTitle>
-                        <CardDescription>
-                            Manage questions in this study set. Click on a
-                            question to view details.
-                        </CardDescription>
-                    </CardHeader>
-                    <CardContent>
-                        <div className="space-y-3 max-h-[300px] overflow-y-auto pr-2">
-                            {quizQuestions.map((question) => (
-                                <div
-                                    key={question.id}
-                                    className="flex justify-between items-center p-3 border rounded-lg hover:bg-gray-50 cursor-pointer"
-                                    onClick={() =>
-                                        setSelectedQuestion(question)
-                                    }>
-                                    <div>
-                                        <p className="font-medium">
-                                            {question.question}
-                                        </p>
-                                        {question.category && (
-                                            <Badge
-                                                variant="outline"
-                                                className="mt-1">
-                                                {question.category}
-                                            </Badge>
-                                        )}
-                                    </div>
-                                    <Button
-                                        variant="outline"
-                                        size="sm"
-                                        onClick={(e) => {
-                                            e.stopPropagation(); // Prevent triggering the parent onClick
-                                            unlinkQuestion(question.id);
-                                        }}
-                                        disabled={
-                                            unlinkingQuestion === question.id
-                                        }
-                                        className="text-red-500 hover:text-red-700 hover:bg-red-50">
-                                        {unlinkingQuestion === question.id ? (
-                                            <Loader2 className="h-4 w-4 animate-spin" />
-                                        ) : (
-                                            "Unlink from Study Set"
-                                        )}
-                                    </Button>
-                                </div>
-                            ))}
-                        </div>
-                    </CardContent>
-                </Card>
+                <motion.div
+                    initial={{ opacity: 0, y: 20 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ duration: 0.7, delay: 0.5 }}>
+                    <Card className="col-span-1 md:col-span-2">
+                        <CardHeader>
+                            <CardTitle>Quiz Questions</CardTitle>
+                            <CardDescription>
+                                Manage questions in this study set. Click on a
+                                question to view details.
+                            </CardDescription>
+                        </CardHeader>
+                        <CardContent>
+                            <div className="space-y-3 max-h-[300px] overflow-y-auto pr-2">
+                                <AnimatePresence>
+                                    {quizQuestions.map((question, index) => (
+                                        <motion.div
+                                            key={question.id}
+                                            initial={{ opacity: 0, y: 10 }}
+                                            animate={{ opacity: 1, y: 0 }}
+                                            transition={{
+                                                duration: 0.4,
+                                                delay: index * 0.05,
+                                            }}
+                                            whileHover={{
+                                                scale: 1.01,
+                                                backgroundColor:
+                                                    "rgba(240, 240, 240, 0.5)",
+                                            }}
+                                            className="flex justify-between items-center p-3 border rounded-lg hover:bg-gray-50 cursor-pointer"
+                                            onClick={() =>
+                                                setSelectedQuestion(question)
+                                            }>
+                                            <div>
+                                                <p className="font-medium">
+                                                    {question.question}
+                                                </p>
+                                                {question.category && (
+                                                    <Badge
+                                                        variant="outline"
+                                                        className="mt-1">
+                                                        {question.category}
+                                                    </Badge>
+                                                )}
+                                            </div>
+                                            <motion.div
+                                                whileHover={{ scale: 1.1 }}
+                                                whileTap={{ scale: 0.9 }}
+                                                onClick={(e) => {
+                                                    e.stopPropagation(); // Prevent triggering the parent onClick
+                                                    unlinkQuestion(question.id);
+                                                }}>
+                                                <Button
+                                                    variant="outline"
+                                                    size="sm"
+                                                    disabled={
+                                                        unlinkingQuestion ===
+                                                        question.id
+                                                    }
+                                                    className="text-red-500 hover:text-red-700 hover:bg-red-50">
+                                                    {unlinkingQuestion ===
+                                                    question.id ? (
+                                                        <Loader2 className="h-4 w-4 animate-spin" />
+                                                    ) : (
+                                                        "Unlink from Study Set"
+                                                    )}
+                                                </Button>
+                                            </motion.div>
+                                        </motion.div>
+                                    ))}
+                                </AnimatePresence>
+                            </div>
+                        </CardContent>
+                    </Card>
+                </motion.div>
             )}
 
             {/* Study Materials Modal */}
@@ -1252,71 +1484,96 @@ export default function StudySetPage() {
                         </div>
                     ) : (
                         <div className="grid gap-4 max-h-[400px] overflow-y-auto pr-2 py-4">
-                            {materials.map((material) => (
-                                <div
-                                    key={material.id}
-                                    className="flex justify-between items-center p-3 border rounded-lg hover:bg-gray-50">
-                                    <div className="flex items-center gap-3">
-                                        <Checkbox
-                                            id={`select-${material.id}`}
-                                            checked={selectedDocuments.includes(
-                                                material.id,
-                                            )}
-                                            onCheckedChange={(checked) => {
-                                                if (checked) {
-                                                    setSelectedDocuments([
-                                                        ...selectedDocuments,
-                                                        material.id,
-                                                    ]);
-                                                } else {
-                                                    setSelectedDocuments(
-                                                        selectedDocuments.filter(
-                                                            (id) =>
-                                                                id !==
-                                                                material.id,
-                                                        ),
-                                                    );
-                                                }
-                                            }}
-                                        />
-                                        <div className="flex-shrink-0 p-1.5 bg-gray-50 rounded">
-                                            {getFileIcon(material.type)}
+                            <AnimatePresence>
+                                {materials.map((material, index) => (
+                                    <motion.div
+                                        key={material.id}
+                                        initial={{ opacity: 0, y: 10 }}
+                                        animate={{ opacity: 1, y: 0 }}
+                                        transition={{
+                                            duration: 0.3,
+                                            delay: index * 0.05,
+                                        }}
+                                        className="flex justify-between items-center p-3 border rounded-lg hover:bg-gray-50"
+                                        whileHover={{
+                                            scale: 1.01,
+                                            boxShadow:
+                                                "0 2px 5px rgba(0,0,0,0.05)",
+                                        }}>
+                                        <div className="flex items-center gap-3">
+                                            <Checkbox
+                                                id={`select-${material.id}`}
+                                                checked={selectedDocuments.includes(
+                                                    material.id,
+                                                )}
+                                                onCheckedChange={(checked) => {
+                                                    if (checked) {
+                                                        setSelectedDocuments([
+                                                            ...selectedDocuments,
+                                                            material.id,
+                                                        ]);
+                                                    } else {
+                                                        setSelectedDocuments(
+                                                            selectedDocuments.filter(
+                                                                (id) =>
+                                                                    id !==
+                                                                    material.id,
+                                                            ),
+                                                        );
+                                                    }
+                                                }}
+                                            />
+                                            <div className="flex-shrink-0 p-1.5 bg-gray-50 rounded">
+                                                {getFileIcon(material.type)}
+                                            </div>
+                                            <div>
+                                                <p className="font-medium">
+                                                    {material.name}
+                                                </p>
+                                                <p className="text-xs text-gray-500">
+                                                    {new Date(
+                                                        material.created_at,
+                                                    ).toLocaleString()}
+                                                </p>
+                                            </div>
                                         </div>
-                                        <div>
-                                            <p className="font-medium">
-                                                {material.name}
-                                            </p>
-                                            <p className="text-xs text-gray-500">
-                                                {new Date(
-                                                    material.created_at,
-                                                ).toLocaleString()}
-                                            </p>
+                                        <div className="flex gap-2">
+                                            <motion.div
+                                                whileHover={{ scale: 1.1 }}
+                                                whileTap={{ scale: 0.9 }}>
+                                                <Button
+                                                    variant="outline"
+                                                    size="sm"
+                                                    onClick={() =>
+                                                        handlePreview(material)
+                                                    }
+                                                    className="gap-1">
+                                                    <Eye className="h-4 w-4" />
+                                                    View
+                                                </Button>
+                                            </motion.div>
+                                            <motion.div
+                                                whileHover={{ scale: 1.1 }}
+                                                whileTap={{ scale: 0.9 }}>
+                                                <Button
+                                                    variant="outline"
+                                                    size="sm"
+                                                    onClick={() => {
+                                                        setShowMaterialsModal(
+                                                            false,
+                                                        );
+                                                        handleDelete(
+                                                            material.id,
+                                                        );
+                                                    }}
+                                                    className="text-red-500 hover:text-red-700 hover:bg-red-50 gap-1">
+                                                    <Trash2 className="h-4 w-4" />
+                                                </Button>
+                                            </motion.div>
                                         </div>
-                                    </div>
-                                    <div className="flex gap-2">
-                                        <Button
-                                            variant="outline"
-                                            size="sm"
-                                            onClick={() =>
-                                                handlePreview(material)
-                                            }
-                                            className="gap-1">
-                                            <Eye className="h-4 w-4" />
-                                            View
-                                        </Button>
-                                        <Button
-                                            variant="outline"
-                                            size="sm"
-                                            onClick={() => {
-                                                setShowMaterialsModal(false);
-                                                handleDelete(material.id);
-                                            }}
-                                            className="text-red-500 hover:text-red-700 hover:bg-red-50 gap-1">
-                                            <Trash2 className="h-4 w-4" />
-                                        </Button>
-                                    </div>
-                                </div>
-                            ))}
+                                    </motion.div>
+                                ))}
+                            </AnimatePresence>
                         </div>
                     )}
 
@@ -1352,23 +1609,37 @@ export default function StudySetPage() {
                                 onClick={() => setShowMaterialsModal(false)}>
                                 Cancel
                             </Button>
-                            <Button
-                                onClick={() => {
-                                    handleGenerateMoreQuestions();
-                                }}
-                                disabled={
-                                    isGeneratingQuiz ||
-                                    selectedDocuments.length === 0
+                            <motion.div
+                                whileHover={
+                                    !isGeneratingQuiz &&
+                                    selectedDocuments.length > 0
+                                        ? { scale: 1.05 }
+                                        : {}
+                                }
+                                whileTap={
+                                    !isGeneratingQuiz &&
+                                    selectedDocuments.length > 0
+                                        ? { scale: 0.95 }
+                                        : {}
                                 }>
-                                {isGeneratingQuiz ? (
-                                    <>
-                                        <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                                        Generating...
-                                    </>
-                                ) : (
-                                    "Generate Questions"
-                                )}
-                            </Button>
+                                <Button
+                                    onClick={() => {
+                                        handleGenerateMoreQuestions();
+                                    }}
+                                    disabled={
+                                        isGeneratingQuiz ||
+                                        selectedDocuments.length === 0
+                                    }>
+                                    {isGeneratingQuiz ? (
+                                        <>
+                                            <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                                            Generating...
+                                        </>
+                                    ) : (
+                                        "Generate Questions"
+                                    )}
+                                </Button>
+                            </motion.div>
                         </div>
                     </DialogFooter>
                 </DialogContent>

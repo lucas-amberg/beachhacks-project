@@ -46,6 +46,7 @@
         "cmdk": "1.0.0",
         "date-fns": "^4.1.0",
         "embla-carousel-react": "^8.5.2",
+        "framer-motion": "^12.5.0",
         "input-otp": "^1.4.2",
         "libreoffice-convert": "^1.6.1",
         "lucide-react": "^0.483.0",
