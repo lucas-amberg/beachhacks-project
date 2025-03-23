@@ -189,38 +189,54 @@ export default function StatsPage() {
                     }));
 
                 try {
-                    // For each missing category, check if it exists before inserting
-                    for (const score of placeholderScores) {
-                        // Check if the score already exists
-                        const { data: existingScore } = await supabase
+                    // Insert placeholder scores using upsert to handle duplicates
+                    const { data: insertedData, error: insertError } =
+                        await supabase
                             .from("category_scores")
-                            .select("*")
-                            .eq("category_name", score.category_name)
-                            .single();
+                            .upsert(placeholderScores, {
+                                onConflict: "category_name",
+                                ignoreDuplicates: true,
+                            })
+                            .select();
 
-                        // Only insert if it doesn't exist
-                        if (!existingScore) {
-                            const { error: insertError } = await supabase
-                                .from("category_scores")
-                                .insert(score);
+                    if (insertError) {
+                        console.error(
+                            "Error creating placeholder category scores:",
+                            JSON.stringify(insertError),
+                        );
 
-                            if (insertError) {
-                                console.error(
-                                    `Error creating score for category ${score.category_name}:`,
-                                    JSON.stringify(insertError),
-                                );
-                            } else {
-                                console.log(
-                                    `Created placeholder score for ${score.category_name}`,
-                                );
-                                // Add to local data with temporary ID
+                        // Add placeholders to local state regardless of error
+                        placeholderScores.forEach((score) => {
+                            if (categoryData) {
+                                categoryData.push({
+                                    ...score,
+                                    id: -1 * (categoryData.length + 1), // Use negative indexes to avoid collisions
+                                });
+                            }
+                        });
+                    } else {
+                        console.log(
+                            `Upserted ${placeholderScores.length} placeholder category scores, received:`,
+                            insertedData,
+                        );
+
+                        // Add any returned data to our state
+                        if (
+                            insertedData &&
+                            insertedData.length > 0 &&
+                            categoryData
+                        ) {
+                            categoryData.push(...insertedData);
+                        } else {
+                            // Fallback - add our placeholders
+                            placeholderScores.forEach((score) => {
                                 if (categoryData) {
                                     categoryData.push({
                                         ...score,
                                         id: -1 * (categoryData.length + 1), // Use negative indexes to avoid collisions
                                     });
                                 }
-                            }
+                            });
                         }
                     }
                 } catch (insertCategoryError) {
@@ -228,6 +244,16 @@ export default function StatsPage() {
                         "Exception creating category scores:",
                         insertCategoryError,
                     );
+
+                    // Add placeholders to local state in case of error
+                    placeholderScores.forEach((score) => {
+                        if (categoryData) {
+                            categoryData.push({
+                                ...score,
+                                id: -1 * (categoryData.length + 1), // Use negative indexes to avoid collisions
+                            });
+                        }
+                    });
                 }
             }
 
