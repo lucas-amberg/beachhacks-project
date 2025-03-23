@@ -300,12 +300,13 @@ function getDocumentSummary(
 // Helper to find or create a category
 async function findOrCreateCategory(
     categoryName: string,
+    questionText?: string,
 ): Promise<string | null> {
     try {
         // Check if category exists
         const { data: existingCategory, error: findError } = await supabase
             .from("categories")
-            .select("name")
+            .select("name, subject")
             .eq("name", categoryName)
             .single();
 
@@ -313,10 +314,40 @@ async function findOrCreateCategory(
             return existingCategory.name;
         }
 
-        // Create new category
+        // Use GPT to infer the university major (subject) based primarily on the question text
+        const subject = await inferSubjectFromQuestion(
+            questionText || "",
+            categoryName,
+        );
+
+        // Create new subject if it doesn't exist
+        if (subject) {
+            // Check if subject already exists
+            const { data: existingSubject } = await supabase
+                .from("subjects")
+                .select("subject")
+                .eq("subject", subject)
+                .single();
+
+            // Create subject if it doesn't exist
+            if (!existingSubject) {
+                const { error: subjectError } = await supabase
+                    .from("subjects")
+                    .insert({ subject });
+
+                if (subjectError) {
+                    console.error("Error creating subject:", subjectError);
+                }
+            }
+        }
+
+        // Create new category with the inferred subject
         const { data: newCategory, error: createError } = await supabase
             .from("categories")
-            .insert({ name: categoryName })
+            .insert({
+                name: categoryName,
+                subject: subject || null,
+            })
             .select("name")
             .single();
 
@@ -328,6 +359,77 @@ async function findOrCreateCategory(
         return newCategory.name;
     } catch (error) {
         console.error("Error finding or creating category:", error);
+        return null;
+    }
+}
+
+/**
+ * Use GPT to infer a university major (subject) based primarily on the question text
+ * with the category as additional context
+ */
+async function inferSubjectFromQuestion(
+    questionText: string,
+    categoryName: string,
+): Promise<string | null> {
+    try {
+        const response = await openai.chat.completions.create({
+            model: "gpt-3.5-turbo",
+            messages: [
+                {
+                    role: "system",
+                    content: `You are a helpful assistant that categorizes educational topics into university majors.
+                    Given a quiz question and its category, determine which university major it would most likely fall under.
+                    Be specific but concise. Return only the name of the major without any explanation or additional text.
+                    Examples:
+                    - For a question about linear algebra (category: Mathematics), return "Mathematics"
+                    - For a question about the American Civil War (category: US History), return "History"
+                    - For a question about Shakespeare's plays (category: Literature), return "English Literature"
+                    - For a question about Python programming (category: Programming), return "Computer Science"
+                    - For a question about quantum mechanics (category: Physics), return "Physics"
+                    - For a question about DNA replication (category: Biology), return "Biology"
+                    - For a question about marketing strategies (category: Business), return "Marketing"
+                    Return a single word or short phrase representing the university major.`,
+                },
+                {
+                    role: "user",
+                    content: `What university major would this quiz question fall under?
+                    
+                    Question: "${questionText}"
+                    Category: ${categoryName}
+                    
+                    Respond with just the name of the major.`,
+                },
+            ],
+            temperature: 0.3,
+            max_tokens: 50,
+        });
+
+        let subject = response.choices[0]?.message?.content?.trim();
+
+        // Clean up the response if needed
+        if (subject) {
+            // Remove any quotation marks, periods, or other formatting
+            subject = subject.replace(/['"\.]/g, "");
+
+            // If the response is too verbose, truncate it
+            if (subject.includes(" ")) {
+                // If there's explanation text, try to extract just the major
+                const words = subject.split(" ");
+                if (words.length > 4) {
+                    // If it's a long response, take just the first few words
+                    subject = words.slice(0, 3).join(" ");
+                }
+            }
+
+            console.log(
+                `Inferred subject "${subject}" for question about "${questionText.substring(0, 30)}..." (category: ${categoryName})`,
+            );
+            return subject;
+        }
+
+        return null;
+    } catch (error) {
+        console.error("Error inferring subject from question:", error);
         return null;
     }
 }
@@ -1059,12 +1161,21 @@ async function saveQuizQuestions(
             // Add to set of unique questions
             uniqueQuestions.add(question.question);
 
+            // Make category more specific if it's too generic
+            if (question.category && typeof question.category === "string") {
+                question.category = makeMoreSpecific(
+                    question.question,
+                    question.category,
+                );
+            }
+
             // Process category if it exists
             let categoryName = null;
             if (question.category && typeof question.category === "string") {
                 try {
                     categoryName = await findOrCreateCategory(
                         question.category,
+                        question.question,
                     );
                 } catch (categoryError) {
                     console.error(
@@ -1240,4 +1351,177 @@ async function saveQuizQuestions(
     console.log(
         `Saved ${savedCount}/${questions.length} questions successfully`,
     );
+}
+
+/**
+ * Make generic category names more specific based on question content
+ */
+function makeMoreSpecific(question: string, category: string): string {
+    // Check if the category is too generic
+    const genericCategories = [
+        "fundamentals",
+        "basics",
+        "principles",
+        "introduction",
+        "concepts",
+        "overview",
+        "training",
+        "analysis",
+        "techniques",
+        "methods",
+        "theory",
+        "practice",
+        "management",
+        "development",
+        "design",
+    ];
+
+    const isGeneric = genericCategories.some(
+        (generic) =>
+            category.toLowerCase().includes(generic) &&
+            category.split(" ").length <= 2,
+    );
+
+    if (!isGeneric) {
+        return category; // Already specific enough
+    }
+
+    // Extract potential domain-specific terms from the question
+    const questionLower = question.toLowerCase();
+    const domainKeywords = [
+        {
+            domain: "AI",
+            terms: [
+                "artificial intelligence",
+                "machine learning",
+                "neural network",
+                "deep learning",
+                "nlp",
+                "computer vision",
+            ],
+        },
+        {
+            domain: "Web",
+            terms: [
+                "html",
+                "css",
+                "javascript",
+                "web development",
+                "frontend",
+                "backend",
+                "api",
+            ],
+        },
+        {
+            domain: "Database",
+            terms: [
+                "sql",
+                "database",
+                "query",
+                "nosql",
+                "mongodb",
+                "mysql",
+                "postgresql",
+            ],
+        },
+        {
+            domain: "Security",
+            terms: [
+                "encryption",
+                "security",
+                "cybersecurity",
+                "firewall",
+                "authentication",
+                "vulnerability",
+            ],
+        },
+        {
+            domain: "Cloud",
+            terms: [
+                "cloud",
+                "aws",
+                "azure",
+                "gcp",
+                "serverless",
+                "microservices",
+                "container",
+                "docker",
+            ],
+        },
+        {
+            domain: "Network",
+            terms: [
+                "network",
+                "tcp/ip",
+                "protocol",
+                "routing",
+                "switch",
+                "packet",
+                "dns",
+            ],
+        },
+        {
+            domain: "Mobile",
+            terms: [
+                "mobile",
+                "android",
+                "ios",
+                "swift",
+                "kotlin",
+                "react native",
+                "flutter",
+            ],
+        },
+        {
+            domain: "Business",
+            terms: [
+                "business",
+                "marketing",
+                "sales",
+                "finance",
+                "strategy",
+                "management",
+                "leadership",
+            ],
+        },
+        {
+            domain: "Data",
+            terms: [
+                "data",
+                "analytics",
+                "big data",
+                "visualization",
+                "statistics",
+                "dashboard",
+                "metrics",
+            ],
+        },
+    ];
+
+    // Find matching domains in the question
+    for (const { domain, terms } of domainKeywords) {
+        if (terms.some((term) => questionLower.includes(term))) {
+            // Add the domain as a prefix to the category if not already there
+            if (!category.toLowerCase().includes(domain.toLowerCase())) {
+                return `${domain} ${category}`;
+            }
+        }
+    }
+
+    // If no specific domain found, look for any capitalized words or technical terms in the question
+    const words = question.split(/\s+/);
+    const technicalTerms = words.filter(
+        (word) =>
+            (word.length > 2 &&
+                word[0] === word[0].toUpperCase() &&
+                word[0] !== word[0].toLowerCase()) ||
+            /^[A-Z0-9]+$/i.test(word), // Acronyms or technical terms like SQL, HTML, etc.
+    );
+
+    if (technicalTerms.length > 0) {
+        // Use the first technical term to make the category more specific
+        return `${technicalTerms[0]} ${category}`;
+    }
+
+    return category; // Return original if no improvements found
 }
