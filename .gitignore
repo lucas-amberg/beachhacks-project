@@ -40,3 +40,5 @@ next-env.d.ts
 bun.lock
 
 ./bun.lock
+
+package-lock.json
