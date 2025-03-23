@@ -21,6 +21,9 @@ const ACCEPTED_FILE_TYPES = [
     "application/pdf",
     "application/vnd.openxmlformats-officedocument.presentationml.presentation",
     "image/png",
+    "image/jpeg",
+    "image/jpg",
+    "image/heic",
     "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
 ];
 
@@ -36,7 +39,7 @@ export default function FileUploadForm() {
 
         if (!ACCEPTED_FILE_TYPES.includes(selectedFile.type)) {
             toast.error(
-                "Invalid file type. Please upload PDF, PPTX, PNG, or DOCX files only.",
+                "Invalid file type. Please upload PDF, PPTX, PNG, JPEG, JPG, HEIC, or DOCX files only.",
             );
             return;
         }
@@ -109,7 +112,7 @@ export default function FileUploadForm() {
                 <CardTitle>Upload Study Material</CardTitle>
                 <CardDescription>
                     Upload your study materials. Accepted file types: PDF, PPTX,
-                    PNG, DOCX.
+                    PNG, JPEG, JPG, HEIC, DOCX.
                 </CardDescription>
             </CardHeader>
             <CardContent>
@@ -120,7 +123,7 @@ export default function FileUploadForm() {
                             id="file"
                             type="file"
                             onChange={handleFileChange}
-                            accept=".pdf,.pptx,.png,.docx"
+                            accept=".pdf,.pptx,.png,.docx,.jpeg,.jpg,.heic"
                             disabled={isUploading}
                         />
                     </div>

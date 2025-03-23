@@ -8,6 +8,17 @@ import { promisify } from "util";
 // Promisify the convert function
 const convertAsync = promisify(libre.convert);
 
+// Function to sanitize filename for Content-Disposition header
+function sanitizeFilename(filename: string): string {
+    // Remove or replace problematic characters (like →)
+    const sanitized = filename
+        .replace(/[^\x00-\x7F]/g, "_") // Replace non-ASCII characters with underscore
+        .replace(/[\/\?<>\\:\*\|"]/g, "_") // Replace other invalid filename characters
+        .trim();
+
+    return encodeURIComponent(sanitized); // Encode the filename for Content-Disposition
+}
+
 // Check if LibreOffice is available
 async function isLibreOfficeAvailable() {
     try {
@@ -40,10 +51,12 @@ export async function POST(request: NextRequest) {
         // If it's already a PDF, just return it
         if (file.name.toLowerCase().endsWith(".pdf")) {
             const buffer = Buffer.from(await file.arrayBuffer());
+            const sanitizedFilename = sanitizeFilename(file.name);
+
             return new NextResponse(buffer, {
                 headers: {
                     "Content-Type": "application/pdf",
-                    "Content-Disposition": `attachment; filename="${file.name}"`,
+                    "Content-Disposition": `attachment; filename="${sanitizedFilename}"`,
                 },
             });
         }
@@ -93,7 +106,7 @@ export async function POST(request: NextRequest) {
             return new NextResponse(pdfBuffer, {
                 headers: {
                     "Content-Type": "application/pdf",
-                    "Content-Disposition": `attachment; filename="${path.parse(file.name).name}.pdf"`,
+                    "Content-Disposition": `attachment; filename="${sanitizeFilename(path.parse(file.name).name + ".pdf")}"`,
                 },
             });
         } catch (conversionError) {

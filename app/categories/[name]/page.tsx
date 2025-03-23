@@ -21,6 +21,8 @@ import {
     ChevronRight,
     Brain,
     Loader2,
+    BookOpen,
+    X,
 } from "lucide-react";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Alert, AlertDescription } from "@/components/ui/alert";
@@ -45,6 +47,9 @@ import { shuffle } from "lodash";
 import { toast } from "sonner";
 import { motion, AnimatePresence } from "framer-motion";
 import QuizDisplay from "@/app/components/QuizDisplay";
+import FlashCardViewer, {
+    FlashCardQuestion,
+} from "@/app/components/FlashCardViewer";
 
 // Define a compatible type for the QuizDisplay component
 interface QuizQuestion {
@@ -57,6 +62,7 @@ interface QuizQuestion {
         id?: number;
         name: string;
     } | null;
+    related_material: string | null;
 }
 
 type Question = {
@@ -69,6 +75,7 @@ type Question = {
         id?: number;
         name: string;
     } | null;
+    related_material: string | null;
 };
 
 type Category = {
@@ -101,6 +108,10 @@ export default function CategoryPage() {
     >(10);
     const [quizQuestions, setQuizQuestions] = useState<QuizQuestion[]>([]);
     const [showQuiz, setShowQuiz] = useState(false);
+    const [showFlashCards, setShowFlashCards] = useState(false);
+    const [flashCardQuestions, setFlashCardQuestions] = useState<
+        FlashCardQuestion[]
+    >([]);
     const [categoryScore, setCategoryScore] = useState<CategoryScore | null>(
         null,
     );
@@ -114,6 +125,9 @@ export default function CategoryPage() {
     const [selectedQuestion, setSelectedQuestion] = useState<Question | null>(
         null,
     );
+
+    // New state for expanded image
+    const [expandedImage, setExpandedImage] = useState<string | null>(null);
 
     // Effect to update window size for confetti
     useEffect(() => {
@@ -227,6 +241,7 @@ export default function CategoryPage() {
                     category: {
                         name: categoryName,
                     },
+                    related_material: q.related_material || null,
                 };
             });
 
@@ -290,6 +305,7 @@ export default function CategoryPage() {
             answer: q.answer,
             explanation: q.explanation || "No explanation provided.",
             category: q.category,
+            related_material: q.related_material || null,
         }));
 
         // Ensure category score exists before starting quiz
@@ -329,6 +345,26 @@ export default function CategoryPage() {
         setQuizQuestions(formattedQuizQuestions);
         setShowQuiz(true);
         toast.success(`Starting quiz with ${count} questions`);
+    };
+
+    const startFlashCards = () => {
+        // Get all questions and shuffle them
+        const allFlashCardQuestions = shuffle([...questions]);
+
+        // Format questions for FlashCardViewer
+        const formattedFlashCardQuestions = allFlashCardQuestions.map((q) => ({
+            id: q.id,
+            question: q.question,
+            answer: q.answer,
+            explanation: q.explanation || undefined,
+            category: q.category,
+        }));
+
+        setFlashCardQuestions(formattedFlashCardQuestions);
+        setShowFlashCards(true);
+        toast.success(
+            `Starting flash card review with ${formattedFlashCardQuestions.length} cards`,
+        );
     };
 
     const handleQuizComplete = async () => {
@@ -456,6 +492,36 @@ export default function CategoryPage() {
                         setCategoryScore(updatedScore);
                         handleQuizComplete();
                     }}
+                />
+            </div>
+        );
+    }
+
+    if (showFlashCards) {
+        return (
+            <div className="container mx-auto py-8 space-y-6">
+                <motion.div
+                    initial={{ opacity: 0, y: -10 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ duration: 0.5 }}
+                    className="flex justify-between items-center mb-6">
+                    <h1 className="text-3xl font-bold">
+                        {category?.name} - Flash Cards
+                    </h1>
+                    <motion.div
+                        whileHover={{ scale: 1.05 }}
+                        whileTap={{ scale: 0.95 }}>
+                        <Button onClick={() => setShowFlashCards(false)}>
+                            Back to Category
+                        </Button>
+                    </motion.div>
+                </motion.div>
+
+                <FlashCardViewer
+                    questions={flashCardQuestions}
+                    isOpen={true}
+                    onClose={() => setShowFlashCards(false)}
+                    title={`${category?.name} - Flash Cards`}
                 />
             </div>
         );
@@ -650,8 +716,20 @@ export default function CategoryPage() {
                                             whileTap={{ scale: 0.98 }}>
                                             <Button
                                                 onClick={startQuiz}
-                                                className="w-full">
+                                                className="w-full mb-2">
                                                 Start Quiz
+                                            </Button>
+                                        </motion.div>
+
+                                        <motion.div
+                                            whileHover={{ scale: 1.02 }}
+                                            whileTap={{ scale: 0.98 }}>
+                                            <Button
+                                                onClick={startFlashCards}
+                                                variant="outline"
+                                                className="w-full flex items-center justify-center gap-2">
+                                                <BookOpen className="h-4 w-4" />
+                                                Start Flash Cards
                                             </Button>
                                         </motion.div>
                                     </motion.div>
@@ -926,6 +1004,32 @@ export default function CategoryPage() {
                                 </div>
                             )}
 
+                            {selectedQuestion.related_material && (
+                                <div>
+                                    <h3 className="font-medium text-sm text-gray-500">
+                                        Related Image:
+                                    </h3>
+                                    <div
+                                        className="mt-2 overflow-hidden rounded-md border cursor-pointer transition-all hover:opacity-90"
+                                        onClick={() =>
+                                            setExpandedImage(
+                                                selectedQuestion.related_material,
+                                            )
+                                        }>
+                                        <img
+                                            src={
+                                                selectedQuestion.related_material
+                                            }
+                                            alt="Related material for question"
+                                            className="w-full h-auto max-h-[300px] object-contain"
+                                        />
+                                    </div>
+                                    <p className="text-xs text-center text-gray-500 mt-1">
+                                        Click image to expand
+                                    </p>
+                                </div>
+                            )}
+
                             {selectedQuestion.category && (
                                 <div>
                                     <h3 className="font-medium text-sm text-gray-500">
@@ -950,6 +1054,29 @@ export default function CategoryPage() {
                             Close
                         </Button>
                     </DialogFooter>
+                </DialogContent>
+            </Dialog>
+
+            {/* Expanded Image Dialog */}
+            <Dialog
+                open={!!expandedImage}
+                onOpenChange={(open) => !open && setExpandedImage(null)}>
+                <DialogContent className="sm:max-w-4xl p-0 overflow-hidden bg-black/90">
+                    <div className="relative">
+                        <Button
+                            variant="ghost"
+                            className="absolute top-2 right-2 rounded-full bg-black/50 hover:bg-black/70 p-2 h-auto text-white"
+                            onClick={() => setExpandedImage(null)}>
+                            <X className="h-5 w-5" />
+                        </Button>
+                        <div className="flex items-center justify-center p-2">
+                            <img
+                                src={expandedImage || ""}
+                                alt="Expanded image"
+                                className="max-h-[80vh] max-w-full object-contain"
+                            />
+                        </div>
+                    </div>
                 </DialogContent>
             </Dialog>
         </div>

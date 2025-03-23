@@ -140,3 +140,20 @@
         @apply bg-background text-foreground;
     }
 }
+
+/* Flash Card 3D Flip Animation */
+.backface-hidden {
+    backface-visibility: hidden;
+    -webkit-backface-visibility: hidden;
+}
+
+.rotate-y-180 {
+    transform: rotateY(180deg);
+}
+
+/* Ensure proper 3D transformations */
+@supports ((-webkit-backdrop-filter: none) or (backdrop-filter: none)) {
+    .backface-hidden {
+        transform-style: preserve-3d;
+    }
+}
