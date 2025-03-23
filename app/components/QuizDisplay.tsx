@@ -20,6 +20,19 @@ import { toast } from "sonner";
 import supabase from "@/lib/supabase";
 import ReactConfetti from "react-confetti";
 
+type CategoryScore = {
+    category_name: string;
+    questions_right: number;
+    questions_solved: number;
+    percentage: number;
+};
+
+type StudySetScore = {
+    questions_right: number;
+    questions_solved: number;
+    percentage: number;
+};
+
 type Category = {
     id: number;
     name: string;
@@ -58,6 +71,11 @@ export default function QuizDisplay({
     const [windowSize, setWindowSize] = useState({ width: 0, height: 0 });
     const [showFeedback, setShowFeedback] = useState(false);
     const [selectedOption, setSelectedOption] = useState<string | null>(null);
+    const [categoryScores, setCategoryScores] = useState<CategoryScore[]>([]);
+    const [studySetScore, setStudySetScore] = useState<StudySetScore | null>(
+        null,
+    );
+    const [isUpdatingScores, setIsUpdatingScores] = useState(false);
 
     // Track window size for confetti
     useEffect(() => {
@@ -87,6 +105,17 @@ export default function QuizDisplay({
             fetchQuestions();
         } else if (propQuestions && propQuestions.length > 0) {
             console.log("Using provided questions:", propQuestions);
+
+            // Log the category format of each question
+            propQuestions.forEach((q, index) => {
+                console.log(
+                    `Question ${index} category:`,
+                    q.category,
+                    "Type:",
+                    q.category ? typeof q.category : "null",
+                );
+            });
+
             // Ensure all questions have the required fields
             const validatedQuestions = propQuestions.map((q) => ({
                 id:
@@ -134,6 +163,20 @@ export default function QuizDisplay({
                     console.error("Error parsing options:", e);
                     options = [];
                 }
+
+                // Log category information
+                console.log(
+                    `Question ${q.id} category:`,
+                    q.category,
+                    "Category type:",
+                    typeof q.category,
+                );
+                console.log(
+                    `Question ${q.id} categories:`,
+                    q.categories,
+                    "Categories type:",
+                    q.categories ? typeof q.categories : "null",
+                );
 
                 // Use the answer directly if it's a string, or convert from index if it's a number (legacy data)
                 const answer =
@@ -200,7 +243,243 @@ export default function QuizDisplay({
         if (selectedOption === currentQuestion.answer) {
             setScore((prevScore) => prevScore + 1);
         }
+
+        // Update score in database
+        if (studySetId && currentQuestion) {
+            updateQuizScores(
+                selectedOption === currentQuestion.answer,
+                currentQuestion,
+            );
+        }
     };
+
+    const updateQuizScores = async (
+        isCorrect: boolean,
+        question: QuizQuestion,
+    ) => {
+        if (!studySetId) return;
+
+        try {
+            // Get the category name from the question, handling different possible formats
+            let categoryName = "Uncategorized";
+
+            if (question.category) {
+                if (
+                    typeof question.category === "object" &&
+                    question.category !== null
+                ) {
+                    // If it's an object with a name property (from the categories relationship)
+                    categoryName = question.category.name || "Uncategorized";
+                } else if (typeof question.category === "string") {
+                    // If it's directly a string
+                    categoryName = question.category;
+                }
+            }
+
+            console.log("Using category name for scoring:", categoryName);
+
+            // Update study_set_scores
+            const { data: studySetData, error: studySetError } = await supabase
+                .from("study_set_scores")
+                .select("*")
+                .eq("id", studySetId)
+                .single();
+
+            if (studySetError && studySetError.code !== "PGRST116") {
+                console.error("Error fetching study set score:", studySetError);
+                return;
+            }
+
+            // If study set score exists, update it, otherwise create it
+            if (studySetData) {
+                await supabase
+                    .from("study_set_scores")
+                    .update({
+                        questions_right: isCorrect
+                            ? studySetData.questions_right + 1
+                            : studySetData.questions_right,
+                        questions_solved: studySetData.questions_solved + 1,
+                    })
+                    .eq("id", studySetId);
+            } else {
+                await supabase.from("study_set_scores").insert({
+                    id: studySetId,
+                    questions_right: isCorrect ? 1 : 0,
+                    questions_solved: 1,
+                });
+            }
+
+            // Update category_scores
+            const { data: categoryData, error: categoryError } = await supabase
+                .from("category_scores")
+                .select("*")
+                .eq("category_name", categoryName)
+                .single();
+
+            if (categoryError && categoryError.code !== "PGRST116") {
+                console.error("Error fetching category score:", categoryError);
+                return;
+            }
+
+            // If category score exists, update it, otherwise create it
+            if (categoryData) {
+                await supabase
+                    .from("category_scores")
+                    .update({
+                        questions_right: isCorrect
+                            ? categoryData.questions_right + 1
+                            : categoryData.questions_right,
+                        questions_solved: categoryData.questions_solved + 1,
+                    })
+                    .eq("category_name", categoryName);
+            } else {
+                // Make sure we have a valid category name before inserting
+                if (
+                    categoryName &&
+                    typeof categoryName === "string" &&
+                    categoryName.trim() !== ""
+                ) {
+                    console.log(
+                        "Creating new category score for:",
+                        categoryName,
+                    );
+                    const { data, error } = await supabase
+                        .from("category_scores")
+                        .insert({
+                            category_name: categoryName,
+                            questions_right: isCorrect ? 1 : 0,
+                            questions_solved: 1,
+                        });
+
+                    if (error) {
+                        console.error("Error inserting category score:", error);
+                    } else {
+                        console.log(
+                            "Successfully inserted category score:",
+                            data,
+                        );
+                    }
+                } else {
+                    console.error(
+                        "Invalid category name for insertion:",
+                        categoryName,
+                    );
+                }
+            }
+        } catch (error) {
+            console.error("Error updating quiz scores:", error);
+        }
+    };
+
+    const fetchScores = async () => {
+        if (!studySetId) return;
+
+        setIsUpdatingScores(true);
+        try {
+            // Fetch study set score
+            const { data: studySetData, error: studySetError } = await supabase
+                .from("study_set_scores")
+                .select("*")
+                .eq("id", studySetId)
+                .single();
+
+            if (studySetError && studySetError.code !== "PGRST116") {
+                console.error("Error fetching study set score:", studySetError);
+            } else if (studySetData) {
+                const percentage =
+                    studySetData.questions_solved > 0
+                        ? (studySetData.questions_right /
+                              studySetData.questions_solved) *
+                          100
+                        : 0;
+
+                setStudySetScore({
+                    questions_right: studySetData.questions_right,
+                    questions_solved: studySetData.questions_solved,
+                    percentage,
+                });
+            }
+
+            // Get unique categories from the quiz questions
+            const categories = questions
+                .map((q) => {
+                    if (!q.category) return "Uncategorized";
+
+                    if (typeof q.category === "object" && q.category !== null) {
+                        return q.category.name || "Uncategorized";
+                    } else if (typeof q.category === "string") {
+                        return q.category;
+                    }
+
+                    return "Uncategorized";
+                })
+                .filter(
+                    (value, index, self) =>
+                        value && self.indexOf(value) === index,
+                );
+
+            console.log("Fetching scores for categories:", categories);
+
+            // Fetch category scores for those categories
+            if (categories.length > 0) {
+                const { data: categoryData, error: categoryError } =
+                    await supabase
+                        .from("category_scores")
+                        .select("*")
+                        .in("category_name", categories);
+
+                if (categoryError) {
+                    console.error(
+                        "Error fetching category scores:",
+                        categoryError,
+                    );
+                } else if (categoryData && categoryData.length > 0) {
+                    console.log("Received category scores:", categoryData);
+
+                    const formattedCategoryScores = categoryData.map((cat) => {
+                        const percentage =
+                            cat.questions_solved > 0
+                                ? (cat.questions_right / cat.questions_solved) *
+                                  100
+                                : 0;
+
+                        return {
+                            category_name: cat.category_name,
+                            questions_right: cat.questions_right,
+                            questions_solved: cat.questions_solved,
+                            percentage,
+                        };
+                    });
+
+                    console.log(
+                        "Formatted category scores for display:",
+                        formattedCategoryScores,
+                    );
+                    setCategoryScores(formattedCategoryScores);
+                } else {
+                    console.log(
+                        "No category scores found for categories:",
+                        categories,
+                    );
+                    setCategoryScores([]);
+                }
+            } else {
+                console.log("No categories found to fetch scores");
+                setCategoryScores([]);
+            }
+        } catch (error) {
+            console.error("Error fetching scores:", error);
+        } finally {
+            setIsUpdatingScores(false);
+        }
+    };
+
+    // Fetch scores when showing results
+    useEffect(() => {
+        if (showResults && studySetId) {
+            fetchScores();
+        }
+    }, [showResults, studySetId]);
 
     const handleNext = () => {
         if (showFeedback) {
@@ -327,6 +606,72 @@ export default function QuizDisplay({
                 </CardHeader>
 
                 <CardContent>
+                    {/* Overall study set performance */}
+                    {studySetScore && (
+                        <div className="mb-6 border rounded-lg p-4 bg-slate-50">
+                            <h3 className="font-medium text-lg mb-2">
+                                Study Set Performance
+                            </h3>
+                            <div className="grid grid-cols-3 gap-4 text-center">
+                                <div>
+                                    <p className="text-2xl font-bold text-primary">
+                                        {studySetScore.questions_right}
+                                    </p>
+                                    <p className="text-sm text-gray-600">
+                                        Questions Correct
+                                    </p>
+                                </div>
+                                <div>
+                                    <p className="text-2xl font-bold">
+                                        {studySetScore.questions_solved}
+                                    </p>
+                                    <p className="text-sm text-gray-600">
+                                        Questions Attempted
+                                    </p>
+                                </div>
+                                <div>
+                                    <p className="text-2xl font-bold text-green-600">
+                                        {studySetScore.percentage.toFixed(1)}%
+                                    </p>
+                                    <p className="text-sm text-gray-600">
+                                        Success Rate
+                                    </p>
+                                </div>
+                            </div>
+                        </div>
+                    )}
+
+                    {/* Category performance */}
+                    {categoryScores.length > 0 && (
+                        <div className="mb-6">
+                            <h3 className="font-medium text-lg mb-3">
+                                Category Performance
+                            </h3>
+                            <div className="space-y-3">
+                                {categoryScores.map((cat) => (
+                                    <div
+                                        key={cat.category_name}
+                                        className="border rounded-md p-3">
+                                        <div className="flex justify-between items-center mb-1">
+                                            <h4 className="font-medium">
+                                                {cat.category_name}
+                                            </h4>
+                                            <Badge
+                                                variant="outline"
+                                                className="ml-2">
+                                                {cat.percentage.toFixed(1)}%
+                                            </Badge>
+                                        </div>
+                                        <div className="text-sm text-gray-600">
+                                            {cat.questions_right} correct out of{" "}
+                                            {cat.questions_solved} attempted
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
+                    )}
+
                     <div className="space-y-6">
                         <h3 className="font-medium text-lg border-b pb-2">
                             Question Summary
@@ -360,7 +705,12 @@ export default function QuizDisplay({
                                                         variant="outline"
                                                         className="ml-2 flex items-center gap-1">
                                                         <Tag className="h-3 w-3" />
-                                                        {question.category.name}
+                                                        {typeof question.category ===
+                                                            "object" &&
+                                                        question.category
+                                                            ? question.category
+                                                                  .name
+                                                            : question.category}
                                                     </Badge>
                                                 )}
                                             </div>
