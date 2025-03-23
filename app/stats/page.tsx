@@ -189,49 +189,39 @@ export default function StatsPage() {
                     }));
 
                 try {
-                    // Insert placeholder scores into database
-                    const { error: insertError } = await supabase
-                        .from("category_scores")
-                        .insert(placeholderScores);
+                    // For each missing category, check if it exists before inserting
+                    for (const score of placeholderScores) {
+                        // Check if the score already exists
+                        const { data: existingScore } = await supabase
+                            .from("category_scores")
+                            .select("*")
+                            .eq("category_name", score.category_name)
+                            .single();
 
-                    if (insertError) {
-                        console.error(
-                            "Error creating placeholder category scores:",
-                            JSON.stringify(insertError),
-                        );
+                        // Only insert if it doesn't exist
+                        if (!existingScore) {
+                            const { error: insertError } = await supabase
+                                .from("category_scores")
+                                .insert(score);
 
-                        // Check if it's a column error which might happen during development/schema changes
-                        if (
-                            insertError.code === "PGRST204" ||
-                            insertError.message?.includes("column") ||
-                            insertError.message?.includes("does not exist")
-                        ) {
-                            console.warn(
-                                "Schema error detected. Adding placeholders to local state only.",
-                            );
-                            // Still add placeholders to local state so the UI works
-                            placeholderScores.forEach((score, index) => {
+                            if (insertError) {
+                                console.error(
+                                    `Error creating score for category ${score.category_name}:`,
+                                    JSON.stringify(insertError),
+                                );
+                            } else {
+                                console.log(
+                                    `Created placeholder score for ${score.category_name}`,
+                                );
+                                // Add to local data with temporary ID
                                 if (categoryData) {
                                     categoryData.push({
                                         ...score,
-                                        id: -1 * (index + 1),
+                                        id: -1 * (categoryData.length + 1), // Use negative indexes to avoid collisions
                                     });
                                 }
-                            });
-                        }
-                    } else {
-                        console.log(
-                            `Created ${placeholderScores.length} placeholder category scores`,
-                        );
-                        // Add the placeholders to our existing data with temporary IDs
-                        placeholderScores.forEach((score, index) => {
-                            if (categoryData) {
-                                categoryData.push({
-                                    ...score,
-                                    id: -1 * (index + 1), // Use negative indexes to avoid collisions
-                                });
                             }
-                        });
+                        }
                     }
                 } catch (insertCategoryError) {
                     console.error(

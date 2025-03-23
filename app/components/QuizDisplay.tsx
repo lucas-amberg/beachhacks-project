@@ -272,10 +272,8 @@ export default function QuizDisplay({
     // Log when showResults changes
     useEffect(() => {
         console.log(`showResults changed to: ${showResults}`);
-        if (showResults) {
-            console.log("Fetching scores for results page");
-            fetchScores();
-        }
+        // We no longer need to call fetchScores here since we're doing it in handleNextOrFinish
+        // This prevents a potential infinite loop or double-fetching
     }, [showResults]);
 
     const handleAnswerSelect = (value: string) => {
@@ -534,12 +532,13 @@ export default function QuizDisplay({
             }
         } catch (error) {
             console.error("Error fetching scores:", error);
+            throw error; // Re-throw the error so we can catch it in the calling function
         } finally {
             setIsUpdatingScores(false);
         }
     };
 
-    const handleNextOrFinish = () => {
+    const handleNextOrFinish = async () => {
         if (showFeedback) {
             // If we're showing feedback, move to next question
             setShowFeedback(false);
@@ -553,15 +552,30 @@ export default function QuizDisplay({
                 setCurrentQuestionIndex(currentQuestionIndex + 1);
             } else {
                 // Finished quiz, show results
-                console.log("Last question completed, showing results now");
-                setShowResults(true);
+                console.log("Last question completed, preparing results");
 
-                // Call onComplete with the final score
-                if (onComplete) {
-                    console.log(
-                        `Calling onComplete with score: ${score}/${questions.length}`,
-                    );
-                    onComplete(score, questions.length);
+                try {
+                    // First fetch scores, then show results
+                    await fetchScores();
+                    console.log("Scores fetched successfully, showing results");
+
+                    // After scores are fetched, show results
+                    setShowResults(true);
+
+                    // Call onComplete with the final score
+                    if (onComplete) {
+                        console.log(
+                            `Calling onComplete with score: ${score}/${questions.length}`,
+                        );
+                        onComplete(score, questions.length);
+                    }
+                } catch (error) {
+                    console.error("Error preparing results screen:", error);
+                    // Still show results even if there was an error
+                    setShowResults(true);
+                    if (onComplete) {
+                        onComplete(score, questions.length);
+                    }
                 }
             }
         } else {
