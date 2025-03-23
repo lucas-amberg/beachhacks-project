@@ -1,36 +1,88 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# BeachHacks Project
 
-## Getting Started
+A Next.js application for quiz generation and subject management using AI.
 
-First, run the development server:
+## Description
+
+This application allows users to generate quizzes from different study material across various categories and subjects, leveraging AI to create content and categorize educational topics.
+
+## Technologies and Libraries Used
+
+### Core Framework and Runtime
+- [Next.js](https://nextjs.org/) - React framework with server-side rendering and static site generation
+- [React](https://react.dev/) - JavaScript library for building user interfaces
+
+### Database and Authentication
+- [Supabase](https://supabase.com/) - Open source Firebase alternative providing database and authentication services
+
+### AI and Machine Learning
+- [OpenAI](https://openai.com/) - AI model integration for quiz generation and subject categorization
+
+### UI Components and Styling
+- [Radix UI](https://www.radix-ui.com/) - Headless UI component primitives
+  - Including: Accordion, Alert Dialog, Aspect Ratio, Avatar, Checkbox, Collapsible, Context Menu, Dialog, Dropdown Menu, Hover Card, Label, Menubar, Navigation Menu, Popover, Progress, Radio Group, Scroll Area, Select, Separator, Slider, Slot, Switch, Tabs, Toggle, Toggle Group, Tooltip
+- [Tailwind CSS](https://tailwindcss.com/) - Utility-first CSS framework
+  - With [tailwind-merge](https://github.com/dcastil/tailwind-merge) and [tailwindcss-animate](https://github.com/jamiebuilds/tailwindcss-animate)
+- [Lucide React](https://lucide.dev/) - Icon library
+- [Framer Motion](https://www.framer.com/motion/) - Animation library
+- [Sonner](https://github.com/emilkowalski/sonner) - Toast notifications
+- [Next Themes](https://github.com/pacocoursey/next-themes) - Theme management
+- [cmdk](https://github.com/pacocoursey/cmdk) - Command menu component
+- [PrimeReact](https://primereact.org/) - UI component library with [PrimeIcons](https://primereact.org/icons/)
+- [Vaul](https://github.com/emilkowalski/vaul) - Drawer component
+- [Embla Carousel](https://www.embla-carousel.com/) - Carousel component
+- [React Confetti](https://github.com/alampros/react-confetti) - Confetti animation
+- [React Day Picker](https://react-day-picker.js.org/) - Date picker component
+- [React Resizable Panels](https://github.com/bvaughn/react-resizable-panels) - Resizable panels
+
+### Form Handling and Validation
+- [React Hook Form](https://react-hook-form.com/) - Form handling
+- [Zod](https://zod.dev/) - TypeScript-first schema validation
+- [Hookform Resolvers](https://github.com/react-hook-form/resolvers) - Validation resolvers for React Hook Form
+- [input-otp](https://github.com/guilherme-teixeira/input-otp) - One-time password input component
+
+### Data Processing and Visualization
+- [PDF.js](https://mozilla.github.io/pdf.js/) - PDF rendering
+- [React PDF](https://github.com/wojtekmaj/react-pdf) - PDF viewer component
+- [libreoffice-convert](https://github.com/elwerene/libreoffice-convert) - Document conversion
+- [date-fns](https://date-fns.org/) - Date manipulation
+- [Recharts](https://recharts.org/) - Charting library
+- [UUID](https://github.com/uuidjs/uuid) - UUID generation
+- [heic2any](https://github.com/alexcorvi/heic2any) - HEIC image conversion
+- [Canvas](https://github.com/Automattic/node-canvas) - Node.js canvas implementation
+
+### File Handling
+- [React Dropzone](https://github.com/react-dropzone/react-dropzone) - File upload component
+
+### HTTP Requests
+- [Axios](https://axios-http.com/) - Promise-based HTTP client
+
+### Developer Tools
+- [TypeScript](https://www.typescriptlang.org/) - JavaScript with syntax for types
+- [ESLint](https://eslint.org/) - JavaScript linter
+- [Prettier](https://prettier.io/) - Code formatter
+
+## Installation
 
 ```bash
+# Install dependencies
+npm install
+
+# Run the development server
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+## Environment Variables
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+This project requires the following environment variables:
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+```
+NEXT_PUBLIC_SUPABASE_URL=your_supabase_url
+NEXT_PUBLIC_SUPABASE_ANON_KEY=your_supabase_anon_key
+SUPABASE_SERVICE_ROLE_KEY=your_supabase_service_role_key
+OPENAI_API_KEY=your_openai_api_key
+```
 
-## Learn More
+## License
 
-To learn more about Next.js, take a look at the following resources:
-
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
-
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+This project is private and not intended for redistribution.
