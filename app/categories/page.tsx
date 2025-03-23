@@ -6,15 +6,18 @@ import supabase from "@/lib/supabase";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
-import { Tag, Search, Brain } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Tag, Search, Brain, BookOpen, Atom, Code, Microscope, Globe, Calculator, Book, Music, Palette, Beaker, Building, History, LibraryBig, GraduationCap, PlusCircle, AlertCircle } from "lucide-react";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Alert, AlertDescription } from "@/components/ui/alert";
-import { AlertCircle } from "lucide-react";
+import { motion, AnimatePresence } from "framer-motion";
 import { Progress } from "@/components/ui/progress";
+import AssignSubjectsButton from "./assign-subjects-button";
 
 type Category = {
     name: string;
     created_at?: string;
+    subject?: string;
     question_count: number;
     score?: {
         questions_right: number;
@@ -52,7 +55,7 @@ export default function CategoriesPage() {
             const { data: categoriesData, error: categoriesError } =
                 await supabase
                     .from("categories")
-                    .select("name, created_at")
+                    .select("name, created_at, subject")
                     .order("name");
 
             if (categoriesError) {
@@ -91,6 +94,7 @@ export default function CategoriesPage() {
                         (category) => ({
                             name: category.name,
                             created_at: category.created_at,
+                            subject: category.subject,
                             question_count: 0,
                         }),
                     );
@@ -135,17 +139,26 @@ export default function CategoriesPage() {
                         return acc;
                     }, {}) || {};
 
-                // Combine categories with their counts and scores
-                const categoriesWithCountsAndScores = categoriesData.map(
-                    (category) => ({
+                // Combine all the data
+                const categoriesWithCounts = categoriesData.map((category) => {
+                    // Count questions for this category
+                    const questionCount = (counts || []).filter(
+                        (q) => q.category === category.name,
+                    ).length;
+
+                    // Get score for this category
+                    const score = scoresByCategory[category.name];
+
+                    return {
                         name: category.name,
                         created_at: category.created_at,
-                        question_count: questionCounts[category.name] || 0,
-                        score: scoresByCategory[category.name] || undefined,
-                    }),
-                );
+                        subject: category.subject,
+                        question_count: questionCount,
+                        score,
+                    };
+                });
 
-                setCategories(categoriesWithCountsAndScores);
+                setCategories(categoriesWithCounts);
             } catch (countError) {
                 // If count query fails, still show categories with 0 counts
                 console.warn("Error processing question counts:", countError);
@@ -154,6 +167,7 @@ export default function CategoriesPage() {
                     (category) => ({
                         name: category.name,
                         created_at: category.created_at,
+                        subject: category.subject,
                         question_count: 0,
                     }),
                 );
@@ -166,6 +180,32 @@ export default function CategoriesPage() {
         } finally {
             setIsLoading(false);
         }
+    };
+
+    // Group categories by subject
+    const getCategoriesBySubject = (cats: Category[]) => {
+        const grouped: Record<string, Category[]> = {};
+        
+        // Handle categories without a subject
+        const uncategorized: Category[] = [];
+        
+        cats.forEach(category => {
+            if (category.subject) {
+                if (!grouped[category.subject]) {
+                    grouped[category.subject] = [];
+                }
+                grouped[category.subject].push(category);
+            } else {
+                uncategorized.push(category);
+            }
+        });
+        
+        // Add uncategorized at the end if there are any
+        if (uncategorized.length > 0) {
+            grouped['Uncategorized'] = uncategorized;
+        }
+        
+        return grouped;
     };
 
     const getPerformanceLabel = (percentage: number) => {
@@ -200,9 +240,45 @@ export default function CategoriesPage() {
         return "bg-red-100 text-red-800";
     };
 
+    const getSubjectIcon = (subject: string) => {
+        const iconMap: Record<string, any> = {
+            Mathematics: Calculator,
+            Physics: Atom,
+            Chemistry: Beaker,
+            Biology: Microscope,
+            History: History,
+            Literature: Book,
+            'Computer Science': Code,
+            Economics: Building,
+            Geography: Globe,
+            Art: Palette,
+            Music: Music,
+            Philosophy: GraduationCap,
+            Education: BookOpen,
+            Uncategorized: Tag,
+        };
+        
+        // Return the mapped icon or a default
+        const IconComponent = iconMap[subject] || LibraryBig;
+        return <IconComponent className="h-6 w-6" />;
+    };
+
     const filteredCategories = categories.filter((category) =>
-        category.name.toLowerCase().includes(searchTerm.toLowerCase()),
+        category.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        (category.subject?.toLowerCase().includes(searchTerm.toLowerCase()) ?? false)
     );
+    
+    const categoriesBySubject = getCategoriesBySubject(filteredCategories);
+    
+    // Sort subject keys alphabetically but keep Uncategorized at the end
+    const subjectKeys = Object.keys(categoriesBySubject).sort((a, b) => {
+        if (a === 'Uncategorized') return 1;
+        if (b === 'Uncategorized') return -1;
+        return a.localeCompare(b);
+    });
+    
+    // Check if we have any categories after filtering
+    const hasCategories = subjectKeys.length > 0;
 
     return (
         <div className="container mx-auto py-8">
@@ -217,7 +293,7 @@ export default function CategoriesPage() {
                     <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-gray-400" />
                     <Input
                         type="search"
-                        placeholder="Filter categories..."
+                        placeholder="Filter categories or subjects..."
                         value={searchTerm}
                         onChange={(e) => setSearchTerm(e.target.value)}
                         className="pl-10"
@@ -225,126 +301,228 @@ export default function CategoriesPage() {
                 </div>
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                {isLoading ? (
-                    // Skeleton loading state
-                    [...Array(6)].map((_, i) => (
-                        <Card
-                            key={i}
-                            className="p-6">
-                            <Skeleton className="h-6 w-32 mb-2" />
-                            <Skeleton className="h-4 w-24" />
-                        </Card>
-                    ))
-                ) : error ? (
-                    // Error state
-                    <div className="col-span-full">
-                        <Alert variant="destructive">
-                            <AlertCircle className="h-4 w-4" />
-                            <AlertDescription>{error}</AlertDescription>
-                        </Alert>
-                    </div>
-                ) : filteredCategories.length === 0 ? (
-                    // Empty state
-                    <div className="col-span-full text-center py-8">
-                        <p className="text-gray-500">
-                            {categories.length === 0
-                                ? "No categories available"
-                                : "No categories match your search"}
-                        </p>
-                    </div>
-                ) : (
-                    // Categories grid
-                    filteredCategories.map((category) => (
-                        <Card
-                            key={category.name}
-                            className="cursor-pointer hover:bg-gray-50 transition-colors"
-                            onClick={() =>
-                                router.push(
-                                    `/categories/${encodeURIComponent(category.name)}`,
-                                )
-                            }>
-                            <CardContent className="pt-6 pb-4 h-full flex flex-col justify-between">
-                                <div className="flex items-center justify-between mb-2">
-                                    <div className="flex items-center gap-2">
-                                        <Tag className="h-4 w-4" />
-                                        <h3 className="font-medium">
-                                            {category.name}
-                                        </h3>
-                                    </div>
-                                    <Badge variant="secondary">
-                                        {category.question_count} questions
-                                    </Badge>
-                                </div>
+            {/* Stats section */}
+            {!isLoading && !error && categories.length > 0 && (
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-8">
+                    <Card>
+                        <CardContent className="flex items-center p-6">
+                            <div className="flex items-center justify-center w-12 h-12 rounded-full bg-blue-100 text-blue-600 mr-4">
+                                <LibraryBig className="h-6 w-6" />
+                            </div>
+                            <div>
+                                <p className="text-sm text-muted-foreground">Subjects</p>
+                                <h3 className="text-2xl font-bold">
+                                    {Object.keys(getCategoriesBySubject(categories)).length}
+                                </h3>
+                            </div>
+                        </CardContent>
+                    </Card>
+                    
+                    <Card>
+                        <CardContent className="flex items-center p-6">
+                            <div className="flex items-center justify-center w-12 h-12 rounded-full bg-purple-100 text-purple-600 mr-4">
+                                <Tag className="h-6 w-6" />
+                            </div>
+                            <div>
+                                <p className="text-sm text-muted-foreground">Categories</p>
+                                <h3 className="text-2xl font-bold">
+                                    {categories.length}
+                                </h3>
+                            </div>
+                        </CardContent>
+                    </Card>
+                    
+                    <Card>
+                        <CardContent className="flex items-center p-6">
+                            <div className="flex items-center justify-center w-12 h-12 rounded-full bg-amber-100 text-amber-600 mr-4">
+                                <Brain className="h-6 w-6" />
+                            </div>
+                            <div>
+                                <p className="text-sm text-muted-foreground">Total Questions</p>
+                                <h3 className="text-2xl font-bold">
+                                    {categories.reduce((sum, cat) => sum + cat.question_count, 0)}
+                                </h3>
+                            </div>
+                        </CardContent>
+                    </Card>
+                </div>
+            )}
 
-                                {category.score ? (
-                                    category.score.questions_solved > 0 ? (
-                                        // Score exists and has attempts
-                                        <div className="mt-auto">
-                                            <div className="flex justify-between text-xs text-gray-500 mb-1">
-                                                <div className="flex items-center gap-1">
-                                                    <Brain className="h-3 w-3" />
-                                                    <span>
-                                                        {
-                                                            category.score
-                                                                .questions_right
-                                                        }{" "}
-                                                        /{" "}
-                                                        {
-                                                            category.score
-                                                                .questions_solved
-                                                        }{" "}
-                                                        correct
-                                                    </span>
-                                                </div>
-                                                <Badge
-                                                    className={`font-medium text-xs ${getPerformanceBadgeClass(category.score.percentage)}`}>
-                                                    {category.score.percentage.toFixed(
-                                                        1,
-                                                    )}
-                                                    %
+            {/* Add AssignSubjectsButton component here */}
+            {!isLoading && !error && <AssignSubjectsButton />}
+
+            {isLoading ? (
+                // Skeleton loading state
+                <div className="space-y-8">
+                    {[...Array(3)].map((_, i) => (
+                        <div key={i} className="space-y-4">
+                            <Skeleton className="h-8 w-48" />
+                            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                                {[...Array(3)].map((_, j) => (
+                                    <Card key={j} className="p-6">
+                                        <Skeleton className="h-6 w-32 mb-2" />
+                                        <Skeleton className="h-4 w-24" />
+                                    </Card>
+                                ))}
+                            </div>
+                        </div>
+                    ))}
+                </div>
+            ) : error ? (
+                // Error state
+                <div>
+                    <Alert variant="destructive">
+                        <AlertCircle className="h-4 w-4" />
+                        <AlertDescription>{error}</AlertDescription>
+                    </Alert>
+                </div>
+            ) : !hasCategories ? (
+                // Empty state
+                <div className="text-center py-12 px-4">
+                    <div className="inline-flex items-center justify-center w-20 h-20 rounded-full bg-gray-100 mb-4">
+                        <Tag className="h-10 w-10 text-gray-400" />
+                    </div>
+                    <h3 className="text-xl font-medium text-gray-900 mb-2">
+                        {categories.length === 0
+                            ? "No categories available"
+                            : "No categories match your search"}
+                    </h3>
+                    <p className="text-gray-500 max-w-md mx-auto mb-6">
+                        {categories.length === 0
+                            ? "Start by creating a new category to organize your questions."
+                            : "Try adjusting your search term or browse all categories."}
+                    </p>
+                    {categories.length === 0 ? (
+                        <Button 
+                            className="inline-flex items-center" 
+                            onClick={() => router.push("/quiz-generator")}
+                        >
+                            <PlusCircle className="mr-2 h-4 w-4" />
+                            Create New Category
+                        </Button>
+                    ) : (
+                        <Button 
+                            variant="outline"
+                            className="inline-flex items-center" 
+                            onClick={() => setSearchTerm("")}
+                        >
+                            Show All Categories
+                        </Button>
+                    )}
+                </div>
+            ) : (
+                // Categories by subject
+                <div className="space-y-10">
+                    <AnimatePresence>
+                        {subjectKeys.map((subject) => (
+                            <motion.div 
+                                key={subject} 
+                                className="space-y-4"
+                                initial={{ opacity: 0, y: 10 }}
+                                animate={{ opacity: 1, y: 0 }}
+                                exit={{ opacity: 0, height: 0 }}
+                                transition={{ duration: 0.3 }}
+                            >
+                                <div className="border-b pb-2">
+                                    <div className="flex items-center gap-3">
+                                        <div className="flex items-center justify-center w-10 h-10 rounded-full bg-primary/10 text-primary">
+                                            {getSubjectIcon(subject)}
+                                        </div>
+                                        <div>
+                                            <h2 className="text-2xl font-bold text-primary">{subject}</h2>
+                                            <div className="flex items-center mt-1">
+                                                <Badge variant="outline" className="font-normal">
+                                                    {categoriesBySubject[subject].length} {categoriesBySubject[subject].length === 1 ? 'category' : 'categories'}
+                                                </Badge>
+                                                <Badge variant="outline" className="ml-2 font-normal">
+                                                    {categoriesBySubject[subject].reduce((sum, cat) => sum + cat.question_count, 0)} questions
                                                 </Badge>
                                             </div>
-                                            <Progress
-                                                className="h-1.5"
-                                                value={
-                                                    category.score.percentage
-                                                }
-                                                style={{
-                                                    background: "#e5e7eb",
-                                                }}
-                                                color={`bg-[${getProgressColor(category.score.percentage)}]`}
-                                            />
-                                            <p
-                                                className="text-xs mt-1"
-                                                style={{
-                                                    color: getPerformanceColor(
-                                                        category.score
-                                                            .percentage,
-                                                    ),
-                                                }}>
-                                                {getPerformanceLabel(
-                                                    category.score.percentage,
-                                                )}
-                                            </p>
                                         </div>
-                                    ) : (
-                                        // Score exists but no attempts (0/0)
-                                        <div>
-                                            <div className="flex items-center gap-1 text-xs text-gray-500">
-                                                <Brain className="h-3 w-3" />
-                                                <span>
-                                                    No quiz attempts yet
-                                                </span>
-                                            </div>
-                                        </div>
-                                    )
-                                ) : null}
-                            </CardContent>
-                        </Card>
-                    ))
-                )}
-            </div>
+                                    </div>
+                                </div>
+                                
+                                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                                    <AnimatePresence mode="popLayout">
+                                        {categoriesBySubject[subject].map((category) => (
+                                            <motion.div
+                                                key={category.name}
+                                                layout
+                                                initial={{ opacity: 0, scale: 0.95 }}
+                                                animate={{ opacity: 1, scale: 1 }}
+                                                exit={{ opacity: 0, scale: 0.95 }}
+                                                transition={{ duration: 0.2 }}
+                                            >
+                                                <Card
+                                                    className="cursor-pointer hover:shadow-md transition-shadow"
+                                                    onClick={() =>
+                                                        router.push(
+                                                            `/categories/${encodeURIComponent(category.name)}`,
+                                                        )
+                                                    }>
+                                                    <CardContent className="p-5">
+                                                        <div className="flex flex-col space-y-3">
+                                                            <div className="flex justify-between items-start">
+                                                                <h3 className="font-medium text-lg line-clamp-2">{category.name}</h3>
+                                                                <Badge className="bg-primary/10 text-primary hover:bg-primary/20">
+                                                                    {category.question_count} {category.question_count === 1 ? 'question' : 'questions'}
+                                                                </Badge>
+                                                            </div>
+                                                            
+                                                            {category.score ? (
+                                                                category.score.questions_solved > 0 ? (
+                                                                    <div className="space-y-2">
+                                                                        <div className="flex justify-between text-xs">
+                                                                            <span className="text-muted-foreground">Progress</span>
+                                                                            <span className="font-medium">{category.score.questions_solved} / {category.question_count} attempted</span>
+                                                                        </div>
+                                                                        <Progress 
+                                                                            value={Math.min(100, Math.round((category.score.questions_solved / category.question_count) * 100))} 
+                                                                            className="h-2" 
+                                                                        />
+                                                                        
+                                                                        <div className="flex justify-between text-xs mt-2">
+                                                                            <span className="text-muted-foreground">Performance</span>
+                                                                            <span className="font-medium" style={{ color: getPerformanceColor(category.score.percentage) }}>
+                                                                                {category.score.questions_right} / {category.score.questions_solved} correct
+                                                                            </span>
+                                                                        </div>
+                                                                        <Progress 
+                                                                            value={category.score.percentage} 
+                                                                            className="h-2"
+                                                                            style={{
+                                                                                background: "#e5e7eb",
+                                                                                "--progress-foreground": getProgressColor(category.score.percentage),
+                                                                            } as any}
+                                                                        />
+                                                                        <p className="text-xs mt-1 font-medium" style={{ color: getPerformanceColor(category.score.percentage) }}>
+                                                                            {getPerformanceLabel(category.score.percentage)}
+                                                                        </p>
+                                                                    </div>
+                                                                ) : (
+                                                                    <div className="flex items-center gap-1 text-xs text-muted-foreground mt-2">
+                                                                        <Brain className="h-3 w-3" />
+                                                                        <span>No quiz attempts yet</span>
+                                                                    </div>
+                                                                )
+                                                            ) : category.question_count > 0 ? (
+                                                                <div className="flex items-center gap-1 text-xs text-muted-foreground mt-2">
+                                                                    <Brain className="h-3 w-3" />
+                                                                    <span>Take a quiz to track progress</span>
+                                                                </div>
+                                                            ) : null}
+                                                        </div>
+                                                    </CardContent>
+                                                </Card>
+                                            </motion.div>
+                                        ))}
+                                    </AnimatePresence>
+                                </div>
+                            </motion.div>
+                        ))}
+                    </AnimatePresence>
+                </div>
+            )}
         </div>
     );
 }
