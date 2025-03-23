@@ -98,44 +98,45 @@ export default function Sidebar() {
     };
 
     return (
-        <div className="w-64 bg-slate-100 dark:bg-slate-900 h-full flex flex-col border-r">
-            <div className="p-4 border-b">
+        <div className="w-64 bg-background h-full flex flex-col border-r border-border">
+            <div className="p-4 border-b border-border">
                 <Link
                     href="/"
                     className="flex items-center gap-3 cursor-pointer">
                     <Image
                         src="/study-sets-logo.png"
                         alt="Study Sets Logo"
-                        width={32}
-                        height={32}
+                        width={50}
+                        height={50}
                         className="rounded-md"
                     />
-                    <h2 className="text-xl font-bold">Study Sets</h2>
+                    <h2 className="text-xl font-bold text-foreground">
+                        Study Sets
+                    </h2>
                 </Link>
             </div>
-            
+
             {/* Categories Link */}
-            <div className="p-4 border-b">
+            <div className="p-4 border-b border-border">
                 <Link
                     href="/categories"
-                    className={`flex items-center gap-2 p-2 rounded-md transition-colors hover:bg-slate-200 dark:hover:bg-slate-800 ${
-                        pathname === "/categories" ? "bg-slate-200 dark:bg-slate-800" : ""
-                    }`}
-                >
+                    className={`flex items-center gap-2 p-2 rounded-md transition-colors hover:bg-card ${
+                        pathname === "/categories" ? "bg-card" : ""
+                    }`}>
                     <Tag className="h-4 w-4" />
-                    <span>Browse Categories</span>
+                    <span className="text-foreground">Browse Categories</span>
                 </Link>
             </div>
 
             <div className="flex-1 overflow-auto">
                 {isLoading ? (
                     <div className="p-4 space-y-2">
-                        <Skeleton className="h-10 w-full" />
-                        <Skeleton className="h-10 w-full" />
-                        <Skeleton className="h-10 w-full" />
+                        <Skeleton className="h-10 w-full bg-muted" />
+                        <Skeleton className="h-10 w-full bg-muted" />
+                        <Skeleton className="h-10 w-full bg-muted" />
                     </div>
                 ) : studySets.length === 0 ? (
-                    <div className="p-4 text-center text-gray-500">
+                    <div className="p-4 text-center text-foreground opacity-70">
                         <p>No study sets yet</p>
                         <p className="text-sm">Create your first one!</p>
                     </div>
@@ -145,17 +146,17 @@ export default function Sidebar() {
                             <Link
                                 key={studySet.id}
                                 href={`/study-set/${studySet.id}`}
-                                className={`block p-2 rounded-md mb-1 transition-colors hover:bg-slate-200 dark:hover:bg-slate-800 ${
+                                className={`block p-2 rounded-md mb-1 transition-colors hover:bg-card ${
                                     pathname === `/study-set/${studySet.id}`
-                                        ? "bg-slate-200 dark:bg-slate-800"
+                                        ? "bg-card"
                                         : ""
                                 }`}>
                                 <div className="flex items-center justify-between">
                                     <div>
-                                        <p className="font-medium">
+                                        <p className="font-medium text-foreground">
                                             {getStudySetDisplayName(studySet)}
                                         </p>
-                                        <p className="text-xs text-gray-500">
+                                        <p className="text-xs opacity-70 text-foreground">
                                             {new Date(
                                                 studySet.created_at,
                                             ).toLocaleDateString()}
@@ -167,11 +168,11 @@ export default function Sidebar() {
                     </div>
                 )}
             </div>
-            <div className="p-4 border-t mt-auto">
-                <div className="space-y-2">
+            <div className="p-4 border-t border-border mt-auto">
+                <div className="flex flex-col gap-3">
                     <Link href="/stats">
                         <Button
-                            className="w-full flex items-center justify-center gap-2"
+                            className="w-full flex items-center justify-center gap-2 bg-secondary text-foreground hover:bg-secondary/80"
                             variant="secondary">
                             <BarChart2 className="h-5 w-5" />
                             <span>View Stats</span>
@@ -180,7 +181,7 @@ export default function Sidebar() {
 
                     <Button
                         onClick={createNewStudySet}
-                        className="w-full flex items-center justify-center gap-2"
+                        className="w-full flex items-center justify-center gap-2 border-border text-foreground"
                         variant="outline">
                         <PlusSquare className="h-5 w-5" />
                         <span>Create New Set</span>

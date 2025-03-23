@@ -34,7 +34,7 @@ export default function Home() {
                 initial={{ opacity: 0, y: 20 }}
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ duration: 0.7, delay: 0.2 }}>
-                <Card className="w-full max-w-lg">
+                <Card className="w-full max-w-lg bg-card border-border">
                     <CardHeader>
                         <motion.div
                             className="flex flex-col items-center"
@@ -48,10 +48,10 @@ export default function Home() {
                                 height={80}
                                 className="rounded-md mb-4"
                             />
-                            <CardTitle className="text-3xl text-center">
+                            <CardTitle className="text-3xl text-center text-foreground">
                                 Study Sets
                             </CardTitle>
-                            <CardDescription className="text-center text-lg mt-2">
+                            <CardDescription className="text-center text-lg mt-2 text-foreground opacity-70">
                                 AI-powered learning from your study materials
                             </CardDescription>
                         </motion.div>
@@ -62,11 +62,11 @@ export default function Home() {
                             initial={{ opacity: 0 }}
                             animate={{ opacity: 1 }}
                             transition={{ duration: 0.5, delay: 0.6 }}>
-                            <p className="text-lg">
+                            <p className="text-lg text-foreground">
                                 Select a study set from the sidebar to view and
                                 manage your study materials.
                             </p>
-                            <p>
+                            <p className="text-foreground">
                                 Upload PDFs, PowerPoint presentations, Word
                                 documents, and images to generate AI quiz
                                 questions automatically.
@@ -81,7 +81,7 @@ export default function Home() {
                             whileHover={{ scale: 1.05 }}
                             whileTap={{ scale: 0.95 }}>
                             <Button
-                                className="mt-2 gap-2 items-center"
+                                className="mt-2 gap-2 items-center bg-primary hover:bg-primary/80 text-white"
                                 onClick={createNewStudySet}>
                                 <span>Create New Study Set</span>
                                 <ArrowRight className="h-4 w-4" />

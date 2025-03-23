@@ -21,7 +21,13 @@ import {
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
-import { ChevronLeft, ChevronDown, Award, BookOpen } from "lucide-react";
+import {
+    ChevronLeft,
+    ChevronDown,
+    Award,
+    BookOpen,
+    ChevronRight,
+} from "lucide-react";
 
 type CategoryScore = {
     id: number;
@@ -638,17 +644,23 @@ export default function StatsPage() {
                                                                         index *
                                                                         0.1,
                                                                 }}
-                                                                className="flex items-center justify-between p-3 border rounded-md"
+                                                                className="flex items-center cursor-pointer justify-between p-3 border rounded-md hover:border-primary hover:bg-card"
+                                                                onClick={() =>
+                                                                    router.push(
+                                                                        `/categories/${encodeURIComponent(category.category_name)}`,
+                                                                    )
+                                                                }
                                                                 whileHover={{
                                                                     scale: 1.02,
                                                                     boxShadow:
                                                                         "0 4px 8px rgba(0,0,0,0.05)",
                                                                 }}>
                                                                 <div>
-                                                                    <h3 className="font-medium">
+                                                                    <h3 className="font-medium flex items-center gap-1">
                                                                         {
                                                                             category.category_name
                                                                         }
+                                                                        <ChevronRight className="h-4 w-4 text-primary opacity-70" />
                                                                     </h3>
                                                                     <p className="text-sm text-gray-500">
                                                                         {
@@ -662,28 +674,32 @@ export default function StatsPage() {
                                                                     </p>
                                                                 </div>
                                                                 <div className="flex items-center gap-2">
-                                                                    <CircularProgress
-                                                                        value={
-                                                                            performance
-                                                                        }
-                                                                        size={
-                                                                            40
-                                                                        }
-                                                                        strokeWidth={
-                                                                            4
-                                                                        }
-                                                                        color={getProgressColor(
-                                                                            performance,
-                                                                        )}
-                                                                    />
-                                                                    <Badge
-                                                                        className={getPerformanceColor(
-                                                                            performance,
-                                                                        )}>
-                                                                        {getPerformanceLabel(
-                                                                            performance,
-                                                                        )}
-                                                                    </Badge>
+                                                                    <div className="w-18 flex justify-center">
+                                                                        <CircularProgress
+                                                                            value={
+                                                                                performance
+                                                                            }
+                                                                            size={
+                                                                                40
+                                                                            }
+                                                                            strokeWidth={
+                                                                                4
+                                                                            }
+                                                                            color={getProgressColor(
+                                                                                performance,
+                                                                            )}
+                                                                        />
+                                                                    </div>
+                                                                    <div className="w-24 flex justify-end">
+                                                                        <Badge
+                                                                            className={getPerformanceColor(
+                                                                                performance,
+                                                                            )}>
+                                                                            {getPerformanceLabel(
+                                                                                performance,
+                                                                            )}
+                                                                        </Badge>
+                                                                    </div>
                                                                 </div>
                                                             </motion.div>
                                                         );
@@ -741,14 +757,20 @@ export default function StatsPage() {
                                                                                 index *
                                                                                 0.05,
                                                                         }}
-                                                                        className="p-2 border rounded-md flex items-center justify-between"
+                                                                        className="p-2 border rounded-md flex items-center justify-between cursor-pointer hover:border-primary hover:bg-card"
+                                                                        onClick={() =>
+                                                                            router.push(
+                                                                                `/categories/${encodeURIComponent(category)}`,
+                                                                            )
+                                                                        }
                                                                         whileHover={{
                                                                             scale: 1.02,
                                                                         }}>
-                                                                        <span>
+                                                                        <span className="flex items-center gap-1">
                                                                             {
                                                                                 category
                                                                             }
+                                                                            <ChevronRight className="h-4 w-4 text-primary opacity-70" />
                                                                         </span>
                                                                         <Badge variant="outline">
                                                                             Not
@@ -830,17 +852,23 @@ export default function StatsPage() {
                                                                         index *
                                                                         0.1,
                                                                 }}
-                                                                className="flex items-center justify-between p-3 border rounded-md"
+                                                                className="flex items-center justify-between p-3 border rounded-md cursor-pointer hover:border-primary hover:bg-card"
+                                                                onClick={() =>
+                                                                    router.push(
+                                                                        `/study-set/${set.id}`,
+                                                                    )
+                                                                }
                                                                 whileHover={{
                                                                     scale: 1.02,
                                                                     boxShadow:
                                                                         "0 4px 8px rgba(0,0,0,0.05)",
                                                                 }}>
                                                                 <div>
-                                                                    <h3 className="font-medium">
+                                                                    <h3 className="font-medium flex items-center gap-1">
                                                                         {
                                                                             set.study_set_name
                                                                         }
+                                                                        <ChevronRight className="h-4 w-4 text-primary opacity-70" />
                                                                     </h3>
                                                                     <p className="text-sm text-gray-500">
                                                                         {
@@ -854,28 +882,32 @@ export default function StatsPage() {
                                                                     </p>
                                                                 </div>
                                                                 <div className="flex items-center gap-2">
-                                                                    <CircularProgress
-                                                                        value={
-                                                                            performance
-                                                                        }
-                                                                        size={
-                                                                            40
-                                                                        }
-                                                                        strokeWidth={
-                                                                            4
-                                                                        }
-                                                                        color={getProgressColor(
-                                                                            performance,
-                                                                        )}
-                                                                    />
-                                                                    <Badge
-                                                                        className={getPerformanceColor(
-                                                                            performance,
-                                                                        )}>
-                                                                        {getPerformanceLabel(
-                                                                            performance,
-                                                                        )}
-                                                                    </Badge>
+                                                                    <div className="w-18 flex justify-center">
+                                                                        <CircularProgress
+                                                                            value={
+                                                                                performance
+                                                                            }
+                                                                            size={
+                                                                                40
+                                                                            }
+                                                                            strokeWidth={
+                                                                                4
+                                                                            }
+                                                                            color={getProgressColor(
+                                                                                performance,
+                                                                            )}
+                                                                        />
+                                                                    </div>
+                                                                    <div className="w-24 flex justify-end">
+                                                                        <Badge
+                                                                            className={getPerformanceColor(
+                                                                                performance,
+                                                                            )}>
+                                                                            {getPerformanceLabel(
+                                                                                performance,
+                                                                            )}
+                                                                        </Badge>
+                                                                    </div>
                                                                 </div>
                                                             </motion.div>
                                                         );
@@ -933,14 +965,20 @@ export default function StatsPage() {
                                                                                 index *
                                                                                 0.05,
                                                                         }}
-                                                                        className="p-2 border rounded-md flex items-center justify-between"
+                                                                        className="p-2 border rounded-md flex items-center justify-between cursor-pointer hover:border-primary hover:bg-card"
+                                                                        onClick={() =>
+                                                                            router.push(
+                                                                                `/study-set/${set.id}`,
+                                                                            )
+                                                                        }
                                                                         whileHover={{
                                                                             scale: 1.02,
                                                                         }}>
-                                                                        <span>
+                                                                        <span className="flex items-center gap-1">
                                                                             {
                                                                                 set.name
                                                                             }
+                                                                            <ChevronRight className="h-4 w-4 text-primary opacity-70" />
                                                                         </span>
                                                                         <Badge variant="outline">
                                                                             Not

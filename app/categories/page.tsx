@@ -3,10 +3,7 @@
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import supabase from "@/lib/supabase";
-import {
-    Card,
-    CardContent,
-} from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Tag, Search } from "lucide-react";
@@ -34,23 +31,28 @@ export default function CategoriesPage() {
     const fetchCategories = async () => {
         setIsLoading(true);
         setError(null);
-        
+
         try {
             // Check if Supabase is properly initialized
             if (!supabase) {
-                setError("Database connection not available. Please try again later.");
+                setError(
+                    "Database connection not available. Please try again later.",
+                );
                 setIsLoading(false);
                 return;
             }
 
             // Get all categories
-            const { data: categoriesData, error: categoriesError } = await supabase
-                .from("categories")
-                .select("name, created_at")
-                .order("name");
+            const { data: categoriesData, error: categoriesError } =
+                await supabase
+                    .from("categories")
+                    .select("name, created_at")
+                    .order("name");
 
             if (categoriesError) {
-                setError(`Error fetching categories: ${categoriesError.message}`);
+                setError(
+                    `Error fetching categories: ${categoriesError.message}`,
+                );
                 setIsLoading(false);
                 return;
             }
@@ -69,47 +71,55 @@ export default function CategoriesPage() {
 
                 if (countsError) {
                     // Just log the error but continue with empty counts
-                    console.warn("Error fetching question counts:", countsError);
-                    
+                    console.warn(
+                        "Error fetching question counts:",
+                        countsError,
+                    );
+
                     // Still show categories but with 0 question counts
-                    const categoriesWithZeroCounts = categoriesData.map(category => ({
-                        name: category.name,
-                        created_at: category.created_at,
-                        question_count: 0
-                    }));
-                    
+                    const categoriesWithZeroCounts = categoriesData.map(
+                        (category) => ({
+                            name: category.name,
+                            created_at: category.created_at,
+                            question_count: 0,
+                        }),
+                    );
+
                     setCategories(categoriesWithZeroCounts);
                     setIsLoading(false);
                     return;
                 }
 
                 // Count questions per category
-                const questionCounts = counts?.reduce<Record<string, number>>((acc, curr) => {
-                    const category = curr.category;
-                    if (category) {
-                        acc[category] = (acc[category] || 0) + 1;
-                    }
-                    return acc;
-                }, {}) || {};
+                const questionCounts =
+                    counts?.reduce<Record<string, number>>((acc, curr) => {
+                        const category = curr.category;
+                        if (category) {
+                            acc[category] = (acc[category] || 0) + 1;
+                        }
+                        return acc;
+                    }, {}) || {};
 
                 // Combine categories with their counts
-                const categoriesWithCounts = categoriesData.map(category => ({
+                const categoriesWithCounts = categoriesData.map((category) => ({
                     name: category.name,
                     created_at: category.created_at,
-                    question_count: questionCounts[category.name] || 0
+                    question_count: questionCounts[category.name] || 0,
                 }));
 
                 setCategories(categoriesWithCounts);
             } catch (countError) {
                 // If count query fails, still show categories with 0 counts
                 console.warn("Error processing question counts:", countError);
-                
-                const categoriesWithZeroCounts = categoriesData.map(category => ({
-                    name: category.name,
-                    created_at: category.created_at,
-                    question_count: 0
-                }));
-                
+
+                const categoriesWithZeroCounts = categoriesData.map(
+                    (category) => ({
+                        name: category.name,
+                        created_at: category.created_at,
+                        question_count: 0,
+                    }),
+                );
+
                 setCategories(categoriesWithZeroCounts);
             }
         } catch (error) {
@@ -120,8 +130,8 @@ export default function CategoriesPage() {
         }
     };
 
-    const filteredCategories = categories.filter(category =>
-        category.name.toLowerCase().includes(searchTerm.toLowerCase())
+    const filteredCategories = categories.filter((category) =>
+        category.name.toLowerCase().includes(searchTerm.toLowerCase()),
     );
 
     const renderContent = () => {
@@ -129,7 +139,9 @@ export default function CategoriesPage() {
             return (
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                     {[...Array(6)].map((_, i) => (
-                        <Card key={i} className="p-6">
+                        <Card
+                            key={i}
+                            className="p-6">
                             <Skeleton className="h-6 w-32 mb-2" />
                             <Skeleton className="h-4 w-24" />
                         </Card>
@@ -151,8 +163,8 @@ export default function CategoriesPage() {
             return (
                 <div className="text-center py-8">
                     <p className="text-gray-500">
-                        {categories.length === 0 
-                            ? "No categories available" 
+                        {categories.length === 0
+                            ? "No categories available"
                             : "No categories match your search"}
                     </p>
                 </div>
@@ -165,13 +177,18 @@ export default function CategoriesPage() {
                     <Card
                         key={category.name}
                         className="cursor-pointer hover:bg-gray-50 transition-colors"
-                        onClick={() => router.push(`/categories/${encodeURIComponent(category.name)}`)}
-                    >
+                        onClick={() =>
+                            router.push(
+                                `/categories/${encodeURIComponent(category.name)}`,
+                            )
+                        }>
                         <CardContent className="pt-6">
                             <div className="flex items-center justify-between">
                                 <div className="flex items-center gap-2">
                                     <Tag className="h-4 w-4" />
-                                    <h3 className="font-medium">{category.name}</h3>
+                                    <h3 className="font-medium">
+                                        {category.name}
+                                    </h3>
                                 </div>
                                 <Badge variant="secondary">
                                     {category.question_count} questions
@@ -189,7 +206,9 @@ export default function CategoriesPage() {
             <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-6">
                 <div>
                     <h1 className="text-3xl font-bold">Categories</h1>
-                    <p className="text-gray-500 mt-1">Browse all available question categories</p>
+                    <p className="text-gray-500 mt-1">
+                        Browse all available question categories
+                    </p>
                 </div>
                 <div className="relative max-w-md w-full">
                     <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-gray-400" />
@@ -206,4 +225,4 @@ export default function CategoriesPage() {
             {renderContent()}
         </div>
     );
-} 
+}
