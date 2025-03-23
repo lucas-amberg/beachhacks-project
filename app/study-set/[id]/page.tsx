@@ -37,6 +37,8 @@ import {
     FolderOpen,
     X,
     BookOpen,
+    Copy,
+    ExternalLink,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -87,6 +89,7 @@ import { isHeicFile, convertHeicToJpeg } from "@/app/lib/heicUtilsClient";
 import FlashCardViewer, {
     FlashCardQuestion,
 } from "@/app/components/FlashCardViewer";
+import Image from "next/image";
 
 type StorageFile = {
     name: string;
@@ -108,7 +111,16 @@ const ACCEPTED_FILE_TYPES = [
 export default function StudySetPage() {
     const { id } = useParams();
     const router = useRouter();
-    const [studySet, setStudySet] = useState<any>(null);
+    const [studySet, setStudySet] = useState<{
+        id: number;
+        name?: string;
+        file_path?: string;
+        created_at: string;
+        made_with_dain?: boolean;
+    }>({
+        id: parseInt(id as string),
+        created_at: new Date().toISOString(),
+    });
     const [materials, setMaterials] = useState<StorageFile[]>([]);
     const [isLoading, setIsLoading] = useState(true);
     const [file, setFile] = useState<File | null>(null);
@@ -150,6 +162,10 @@ export default function StudySetPage() {
     const [flashCardQuestions, setFlashCardQuestions] = useState<
         FlashCardQuestion[]
     >([]);
+    const [dainDialogOpen, setDainDialogOpen] = useState(false);
+    const [copied, setCopied] = useState(false);
+    const dainServiceUrl =
+        "https://tunnel.dain-local.com/ArSKcDC6EBmHQTm4bFdTHnJqodeKkP1Yh5L9dwhDAXUE";
 
     useEffect(() => {
         fetchStudySet();
@@ -1286,6 +1302,12 @@ export default function StudySetPage() {
         );
     };
 
+    const copyToClipboard = async () => {
+        await navigator.clipboard.writeText(dainServiceUrl);
+        setCopied(true);
+        setTimeout(() => setCopied(false), 2000);
+    };
+
     if (!studySet) {
         return (
             <div className="flex justify-center items-center h-full">
@@ -1379,6 +1401,7 @@ export default function StudySetPage() {
                                 className="text-2xl font-bold h-12 w-[300px]"
                                 placeholder="Enter study set name"
                                 disabled={isSavingName}
+                                autoFocus
                             />
                             <motion.div
                                 whileHover={{ scale: 1.1 }}
@@ -1393,7 +1416,7 @@ export default function StudySetPage() {
                             </motion.div>
                         </div>
                     ) : (
-                        <>
+                        <div className="flex items-center gap-2">
                             <h1 className="text-3xl font-bold">
                                 {studySet.name || `Study Set #${id}`}
                             </h1>
@@ -1408,7 +1431,99 @@ export default function StudySetPage() {
                                     <Pencil className="h-4 w-4" />
                                 </Button>
                             </motion.div>
-                        </>
+                            {studySet.made_with_dain && (
+                                <>
+                                    <div
+                                        className="flex items-center bg-black rounded px-2 py-1 ml-2 cursor-pointer hover:bg-black/80"
+                                        onClick={() => setDainDialogOpen(true)}>
+                                        <Image
+                                            src="/dain-logo.png"
+                                            alt="Dain Logo"
+                                            width={16}
+                                            height={16}
+                                            className="mr-1"
+                                        />
+                                        <span className="text-white text-xs">
+                                            Made with Dain
+                                        </span>
+                                    </div>
+
+                                    <Dialog
+                                        open={dainDialogOpen}
+                                        onOpenChange={setDainDialogOpen}>
+                                        <DialogContent className="sm:max-w-md">
+                                            <DialogHeader>
+                                                <DialogTitle>
+                                                    Set up Dain Integration
+                                                </DialogTitle>
+                                                <DialogDescription>
+                                                    Follow these steps to
+                                                    integrate Dain with Study
+                                                    Sets
+                                                </DialogDescription>
+                                            </DialogHeader>
+                                            <div className="space-y-4 py-4">
+                                                <ol className="list-decimal pl-5 space-y-2">
+                                                    <li>
+                                                        Go to Dain and turn on
+                                                        Developer Mode in
+                                                        settings
+                                                    </li>
+                                                    <li>
+                                                        Copy the URL below and
+                                                        add it as a service
+                                                    </li>
+                                                    <li>
+                                                        Open the BeachHacks
+                                                        Assistant link to start
+                                                        using Dain
+                                                    </li>
+                                                </ol>
+
+                                                <div className="bg-slate-100 p-3 rounded-md relative">
+                                                    <pre className="text-sm overflow-x-auto whitespace-normal break-all">
+                                                        {dainServiceUrl.length >
+                                                        40
+                                                            ? `${dainServiceUrl.substring(0, 40)}...`
+                                                            : dainServiceUrl}
+                                                    </pre>
+                                                    <Button
+                                                        variant="outline"
+                                                        size="sm"
+                                                        className="absolute top-2 right-2"
+                                                        onClick={
+                                                            copyToClipboard
+                                                        }>
+                                                        {copied ? (
+                                                            "Copied!"
+                                                        ) : (
+                                                            <Copy className="h-4 w-4" />
+                                                        )}
+                                                    </Button>
+                                                </div>
+
+                                                <div className="flex justify-center pt-4">
+                                                    <Button
+                                                        onClick={() =>
+                                                            window.open(
+                                                                "https://beachhacks-assistant.dain.org/",
+                                                                "_blank",
+                                                            )
+                                                        }
+                                                        className="flex items-center gap-2">
+                                                        <span>
+                                                            Open BeachHacks
+                                                            Assistant
+                                                        </span>
+                                                        <ExternalLink className="h-4 w-4" />
+                                                    </Button>
+                                                </div>
+                                            </div>
+                                        </DialogContent>
+                                    </Dialog>
+                                </>
+                            )}
+                        </div>
                     )}
                 </div>
                 <motion.div

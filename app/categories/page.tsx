@@ -469,19 +469,21 @@ export default function CategoriesPage() {
             ) : (
                 // Categories by subject
                 <div className="space-y-6">
-                    <Accordion 
-                        type="multiple" 
+                    <Accordion
+                        type="multiple"
                         className="space-y-4"
                         value={expandedSubjects}
                         onValueChange={handleAccordionChange}>
                         {subjectKeys.map((subject) => {
-                            const subjectCategories = categoriesBySubject[subject];
+                            const subjectCategories =
+                                categoriesBySubject[subject];
                             const totalQuestions = subjectCategories.reduce(
-                                (sum, cat) => sum + cat.question_count, 0
+                                (sum, cat) => sum + cat.question_count,
+                                0,
                             );
-                            
+
                             return (
-                                <AccordionItem 
+                                <AccordionItem
                                     key={subject}
                                     value={subject}
                                     className="border rounded-lg shadow-sm overflow-hidden bg-white">
@@ -496,16 +498,26 @@ export default function CategoriesPage() {
                                                         {subject}
                                                     </h2>
                                                     <div className="flex items-center mt-1">
-                                                        <Badge variant="outline" className="font-normal">
-                                                            {subjectCategories.length}{" "}
-                                                            {subjectCategories.length === 1 ? "category" : "categories"}
+                                                        <Badge
+                                                            variant="outline"
+                                                            className="font-normal">
+                                                            {
+                                                                subjectCategories.length
+                                                            }{" "}
+                                                            {subjectCategories.length ===
+                                                            1
+                                                                ? "category"
+                                                                : "categories"}
                                                         </Badge>
                                                     </div>
                                                 </div>
                                             </div>
                                             <div className="flex items-center gap-2 mr-2">
                                                 <Badge className="bg-primary/10 text-primary text-sm px-3 py-1">
-                                                    {totalQuestions} {totalQuestions === 1 ? "question" : "questions"}
+                                                    {totalQuestions}{" "}
+                                                    {totalQuestions === 1
+                                                        ? "question"
+                                                        : "questions"}
                                                 </Badge>
                                             </div>
                                         </div>
@@ -513,74 +525,140 @@ export default function CategoriesPage() {
                                     <AccordionContent className="px-6 pb-6 pt-4 bg-slate-50/30">
                                         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                                             <AnimatePresence mode="popLayout">
-                                                {subjectCategories.map((category) => (
-                                                    <motion.div
-                                                        key={category.name}
-                                                        layout
-                                                        className="h-full"
-                                                        initial={{ opacity: 0, scale: 0.95 }}
-                                                        animate={{ opacity: 1, scale: 1 }}
-                                                        exit={{ opacity: 0, scale: 0.95 }}
-                                                        transition={{ duration: 0.2 }}>
-                                                        <Card
-                                                            className="cursor-pointer hover:shadow-md transition-shadow h-full flex flex-col bg-white border-muted/70"
-                                                            onClick={() => router.push(`/categories/${encodeURIComponent(category.name)}`)}>
-                                                            <CardContent className="p-5 flex-grow">
-                                                                <div className="flex flex-col space-y-3 h-full">
-                                                                    <div className="flex justify-between items-start">
-                                                                        <h3 className="font-medium text-lg line-clamp-2">
-                                                                            {category.name}
-                                                                        </h3>
-                                                                        <Badge className="bg-primary/10 text-primary hover:bg-primary/20">
-                                                                            {category.question_count}{" "}
-                                                                            {category.question_count === 1 ? "question" : "questions"}
-                                                                        </Badge>
-                                                                    </div>
+                                                {subjectCategories.map(
+                                                    (category) => (
+                                                        <motion.div
+                                                            key={category.name}
+                                                            layout
+                                                            className="h-full"
+                                                            initial={{
+                                                                opacity: 0,
+                                                                scale: 0.95,
+                                                            }}
+                                                            animate={{
+                                                                opacity: 1,
+                                                                scale: 1,
+                                                            }}
+                                                            exit={{
+                                                                opacity: 0,
+                                                                scale: 0.95,
+                                                            }}
+                                                            transition={{
+                                                                duration: 0.2,
+                                                            }}>
+                                                            <Card
+                                                                className="cursor-pointer hover:shadow-md transition-shadow h-full flex flex-col bg-white border-muted/70"
+                                                                onClick={() =>
+                                                                    router.push(
+                                                                        `/categories/${encodeURIComponent(category.name)}`,
+                                                                    )
+                                                                }>
+                                                                <CardContent className="p-5 flex-grow">
+                                                                    <div className="flex flex-col space-y-3 h-full">
+                                                                        <div className="flex justify-between items-start">
+                                                                            <h3 className="font-medium text-lg line-clamp-2">
+                                                                                {
+                                                                                    category.name
+                                                                                }
+                                                                            </h3>
+                                                                            <Badge className="bg-primary/10 text-primary hover:bg-primary/20">
+                                                                                {
+                                                                                    category.question_count
+                                                                                }{" "}
+                                                                                {category.question_count ===
+                                                                                1
+                                                                                    ? "question"
+                                                                                    : "questions"}
+                                                                            </Badge>
+                                                                        </div>
 
-                                                                    <div className="flex-grow">
-                                                                        {category.score ? (
-                                                                            category
-                                                                                .score
-                                                                                .questions_solved >
-                                                                            0 ? (
-                                                                                <div className="space-y-2">
-                                                                                    <div className="flex justify-between text-xs">
-                                                                                        <span className="text-muted-foreground">
-                                                                                            Progress
-                                                                                        </span>
-                                                                                        <span className="font-medium">
-                                                                                            {
+                                                                        <div className="flex-grow">
+                                                                            {category.score ? (
+                                                                                category
+                                                                                    .score
+                                                                                    .questions_solved >
+                                                                                0 ? (
+                                                                                    <div className="space-y-2">
+                                                                                        <div className="flex justify-between text-xs">
+                                                                                            <span className="text-muted-foreground">
+                                                                                                Progress
+                                                                                            </span>
+                                                                                            <span className="font-medium">
+                                                                                                {
+                                                                                                    category
+                                                                                                        .score
+                                                                                                        .questions_solved
+                                                                                                }{" "}
+                                                                                                /{" "}
+                                                                                                {
+                                                                                                    category.question_count
+                                                                                                }{" "}
+                                                                                                attempted
+                                                                                            </span>
+                                                                                        </div>
+                                                                                        <Progress
+                                                                                            value={Math.min(
+                                                                                                100,
+                                                                                                Math.round(
+                                                                                                    (category
+                                                                                                        .score
+                                                                                                        .questions_solved /
+                                                                                                        category.question_count) *
+                                                                                                        100,
+                                                                                                ),
+                                                                                            )}
+                                                                                            className="h-2"
+                                                                                        />
+
+                                                                                        <div className="flex justify-between text-xs mt-2">
+                                                                                            <span className="text-muted-foreground">
+                                                                                                Performance
+                                                                                            </span>
+                                                                                            <span
+                                                                                                className="font-medium"
+                                                                                                style={{
+                                                                                                    color: getPerformanceColor(
+                                                                                                        category
+                                                                                                            .score
+                                                                                                            .percentage,
+                                                                                                    ),
+                                                                                                }}>
+                                                                                                {
+                                                                                                    category
+                                                                                                        .score
+                                                                                                        .questions_right
+                                                                                                }{" "}
+                                                                                                /{" "}
+                                                                                                {
+                                                                                                    category
+                                                                                                        .score
+                                                                                                        .questions_solved
+                                                                                                }{" "}
+                                                                                                correct
+                                                                                            </span>
+                                                                                        </div>
+                                                                                        <Progress
+                                                                                            value={
                                                                                                 category
                                                                                                     .score
-                                                                                                    .questions_solved
-                                                                                            }{" "}
-                                                                                            /{" "}
-                                                                                            {
-                                                                                                category.question_count
-                                                                                            }{" "}
-                                                                                            attempted
-                                                                                        </span>
-                                                                                    </div>
-                                                                                    <Progress
-                                                                                        value={Math.min(
-                                                                                            100,
-                                                                                            Math.round(
-                                                                                                (category
-                                                                                                    .score
-                                                                                                    .questions_solved /
-                                                                                                    category.question_count) *
-                                                                                                100,
-                                                                                            ),
-                                                                                        )}
-                                                                                        className="h-2"
-                                                                                    />
-
-                                                                                    <div className="flex justify-between text-xs mt-2">
-                                                                                        <span className="text-muted-foreground">
-                                                                                            Performance
-                                                                                        </span>
-                                                                                        <span
-                                                                                            className="font-medium"
+                                                                                                    .percentage
+                                                                                            }
+                                                                                            className="h-2"
+                                                                                            style={
+                                                                                                {
+                                                                                                    background:
+                                                                                                        "#e5e7eb",
+                                                                                                    "--progress-foreground":
+                                                                                                        getProgressColor(
+                                                                                                            category
+                                                                                                                .score
+                                                                                                                .percentage,
+                                                                                                        ),
+                                                                                                } as any
+                                                                                            }
+                                                                                        />
+                                                                                        <p
+                                                                                            className="text-xs mt-1 font-medium"
                                                                                             style={{
                                                                                                 color: getPerformanceColor(
                                                                                                     category
@@ -588,87 +666,45 @@ export default function CategoriesPage() {
                                                                                                         .percentage,
                                                                                                 ),
                                                                                             }}>
-                                                                                            {
-                                                                                                category
-                                                                                                    .score
-                                                                                                    .questions_right
-                                                                                            }{" "}
-                                                                                            /{" "}
-                                                                                            {
-                                                                                                category
-                                                                                                    .score
-                                                                                                    .questions_solved
-                                                                                            }{" "}
-                                                                                            correct
-                                                                                        </span>
-                                                                                    </div>
-                                                                                    <Progress
-                                                                                        value={
-                                                                                            category
-                                                                                                .score
-                                                                                                .percentage
-                                                                                        }
-                                                                                        className="h-2"
-                                                                                        style={
-                                                                                            {
-                                                                                                background:
-                                                                                                    "#e5e7eb",
-                                                                                                "--progress-foreground":
-                                                                                                    getProgressColor(
-                                                                                                        category
-                                                                                                            .score
-                                                                                                            .percentage,
-                                                                                                    ),
-                                                                                            } as any
-                                                                                        }
-                                                                                    />
-                                                                                    <p
-                                                                                        className="text-xs mt-1 font-medium"
-                                                                                        style={{
-                                                                                            color: getPerformanceColor(
+                                                                                            {getPerformanceLabel(
                                                                                                 category
                                                                                                     .score
                                                                                                     .percentage,
-                                                                                            ),
-                                                                                        }}>
-                                                                                        {getPerformanceLabel(
-                                                                                            category
-                                                                                                .score
-                                                                                                .percentage,
-                                                                                        )}
-                                                                                    </p>
-                                                                                </div>
-                                                                            ) : (
-                                                                                <div className="flex items-center gap-1 text-xs text-muted-foreground mt-auto">
+                                                                                            )}
+                                                                                        </p>
+                                                                                    </div>
+                                                                                ) : (
+                                                                                    <div className="flex items-center gap-1 text-xs text-muted-foreground mt-auto">
+                                                                                        <Brain className="h-3 w-3" />
+                                                                                        <span>
+                                                                                            No
+                                                                                            quiz
+                                                                                            attempts
+                                                                                            yet
+                                                                                        </span>
+                                                                                    </div>
+                                                                                )
+                                                                            ) : category.question_count >
+                                                                              0 ? (
+                                                                                <div className="flex items-center gap-1 text-xs text-muted-foreground mt-2">
                                                                                     <Brain className="h-3 w-3" />
                                                                                     <span>
-                                                                                        No
+                                                                                        Take
+                                                                                        a
                                                                                         quiz
-                                                                                        attempts
-                                                                                        yet
+                                                                                        to
+                                                                                        track
+                                                                                        progress
                                                                                     </span>
                                                                                 </div>
-                                                                            )
-                                                                        ) : category.question_count >
-                                                                          0 ? (
-                                                                            <div className="flex items-center gap-1 text-xs text-muted-foreground mt-2">
-                                                                                <Brain className="h-3 w-3" />
-                                                                                <span>
-                                                                                    Take
-                                                                                    a
-                                                                                    quiz
-                                                                                    to
-                                                                                    track
-                                                                                    progress
-                                                                                </span>
-                                                                            </div>
-                                                                        ) : null}
+                                                                            ) : null}
+                                                                        </div>
                                                                     </div>
-                                                                </div>
-                                                            </CardContent>
-                                                        </Card>
-                                                    </motion.div>
-                                                ))}
+                                                                </CardContent>
+                                                            </Card>
+                                                        </motion.div>
+                                                    ),
+                                                )}
                                             </AnimatePresence>
                                         </div>
                                     </AccordionContent>

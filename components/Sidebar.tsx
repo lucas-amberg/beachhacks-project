@@ -6,16 +6,40 @@ import Link from "next/link";
 import Image from "next/image";
 import supabase from "@/lib/supabase";
 
-import { PlusSquare, BarChart2, Tag } from "lucide-react";
+import { PlusSquare, BarChart2, Tag, Copy, ExternalLink } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { StudySet } from "@/lib/supabase";
+import {
+    Dialog,
+    DialogContent,
+    DialogDescription,
+    DialogHeader,
+    DialogTitle,
+    DialogTrigger,
+} from "@/components/ui/dialog";
+
+// Extend the StudySet type to include made_with_dain flag
+type ExtendedStudySet = StudySet & {
+    made_with_dain?: boolean;
+};
 
 export default function Sidebar() {
-    const [studySets, setStudySets] = useState<StudySet[]>([]);
+    const [studySets, setStudySets] = useState<ExtendedStudySet[]>([]);
     const [isLoading, setIsLoading] = useState(true);
+    const [dialogOpen, setDialogOpen] = useState(false);
+    const [copied, setCopied] = useState(false);
     const router = useRouter();
     const pathname = usePathname();
+
+    const dainServiceUrl =
+        "https://tunnel.dain-local.com/ArSKcDC6EBmHQTm4bFdTHnJqodeKkP1Yh5L9dwhDAXUE";
+
+    const copyToClipboard = async () => {
+        await navigator.clipboard.writeText(dainServiceUrl);
+        setCopied(true);
+        setTimeout(() => setCopied(false), 2000);
+    };
 
     useEffect(() => {
         const fetchStudySets = async () => {
@@ -93,7 +117,7 @@ export default function Sidebar() {
         router.push(`/create-study-set`);
     };
 
-    const getStudySetDisplayName = (studySet: StudySet) => {
+    const getStudySetDisplayName = (studySet: ExtendedStudySet) => {
         return studySet.name || `Study Set #${studySet.id}`;
     };
 
@@ -156,11 +180,27 @@ export default function Sidebar() {
                                         <p className="font-medium text-foreground">
                                             {getStudySetDisplayName(studySet)}
                                         </p>
-                                        <p className="text-xs opacity-70 text-foreground">
-                                            {new Date(
-                                                studySet.created_at,
-                                            ).toLocaleDateString()}
-                                        </p>
+                                        <div className="flex items-center gap-2">
+                                            <p className="text-xs opacity-70 text-foreground">
+                                                {new Date(
+                                                    studySet.created_at,
+                                                ).toLocaleDateString()}
+                                            </p>
+                                            {studySet.made_with_dain && (
+                                                <div className="flex items-center bg-black rounded px-1 py-0.5">
+                                                    <Image
+                                                        src="/dain-logo.png"
+                                                        alt="Dain Logo"
+                                                        width={12}
+                                                        height={12}
+                                                        className="mr-1"
+                                                    />
+                                                    <span className="text-white text-[10px]">
+                                                        Made with Dain
+                                                    </span>
+                                                </div>
+                                            )}
+                                        </div>
                                     </div>
                                 </div>
                             </Link>
@@ -170,6 +210,83 @@ export default function Sidebar() {
             </div>
             <div className="p-4 border-t border-border mt-auto">
                 <div className="flex flex-col gap-3">
+                    {/* Use Dain button with dialog */}
+                    <Dialog
+                        open={dialogOpen}
+                        onOpenChange={setDialogOpen}>
+                        <DialogTrigger asChild>
+                            <Button className="w-full flex items-center justify-center gap-2 bg-black text-white hover:bg-black/80">
+                                <Image
+                                    src="/dain-logo.png"
+                                    alt="Dain Logo"
+                                    width={20}
+                                    height={20}
+                                />
+                                <span>Use Dain</span>
+                            </Button>
+                        </DialogTrigger>
+                        <DialogContent className="sm:max-w-md">
+                            <DialogHeader>
+                                <DialogTitle>
+                                    Set up Dain Integration
+                                </DialogTitle>
+                                <DialogDescription>
+                                    Follow these steps to integrate Dain with
+                                    Study Sets
+                                </DialogDescription>
+                            </DialogHeader>
+                            <div className="space-y-4 py-4">
+                                <ol className="list-decimal pl-5 space-y-2">
+                                    <li>
+                                        Go to Dain and turn on Developer Mode in
+                                        settings
+                                    </li>
+                                    <li>
+                                        Copy the URL below and add it as a
+                                        service
+                                    </li>
+                                    <li>
+                                        Open the BeachHacks Assistant link to
+                                        start using Dain
+                                    </li>
+                                </ol>
+
+                                <div className="bg-slate-100 p-3 rounded-md relative">
+                                    <pre className="text-sm overflow-x-auto whitespace-normal break-all">
+                                        {dainServiceUrl.length > 40
+                                            ? `${dainServiceUrl.substring(0, 40)}...`
+                                            : dainServiceUrl}
+                                    </pre>
+                                    <Button
+                                        variant="outline"
+                                        size="sm"
+                                        className="absolute top-2 right-2"
+                                        onClick={copyToClipboard}>
+                                        {copied ? (
+                                            "Copied!"
+                                        ) : (
+                                            <Copy className="h-4 w-4" />
+                                        )}
+                                    </Button>
+                                </div>
+
+                                <div className="flex justify-center pt-4">
+                                    <Button
+                                        onClick={() =>
+                                            window.open(
+                                                "https://beachhacks-assistant.dain.org/",
+                                                "_blank",
+                                            )
+                                        }
+                                        className="flex items-center gap-2">
+                                        <span>Open BeachHacks Assistant</span>
+                                        <ExternalLink className="h-4 w-4" />
+                                    </Button>
+                                </div>
+                            </div>
+                        </DialogContent>
+                    </Dialog>
+
                     <Link href="/stats">
                         <Button
                             className="w-full flex items-center justify-center gap-2 bg-secondary text-foreground hover:bg-secondary/80"
