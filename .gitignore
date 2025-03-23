@@ -42,3 +42,8 @@ bun.lock
 ./bun.lock
 
 package-lock.json
+
+**/*/.env*
+**/*/node_modules
+.env*
+

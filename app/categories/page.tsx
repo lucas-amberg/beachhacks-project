@@ -7,12 +7,32 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Tag, Search, Brain, BookOpen, Atom, Code, Microscope, Globe, Calculator, Book, Music, Palette, Beaker, Building, History, LibraryBig, GraduationCap, PlusCircle, AlertCircle } from "lucide-react";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Alert, AlertDescription } from "@/components/ui/alert";
-import { motion, AnimatePresence } from "framer-motion";
 import { Progress } from "@/components/ui/progress";
+import { motion, AnimatePresence } from "framer-motion";
 import AssignSubjectsButton from "./assign-subjects-button";
+import {
+  Tag,
+  Search,
+  Brain,
+  BookOpen,
+  Atom,
+  Code,
+  Microscope,
+  Globe,
+  Calculator,
+  Book,
+  Music,
+  Palette,
+  Beaker,
+  Building,
+  History,
+  LibraryBig,
+  GraduationCap,
+  PlusCircle,
+  AlertCircle
+} from "lucide-react";
 
 type Category = {
     name: string;
