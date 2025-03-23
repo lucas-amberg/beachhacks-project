@@ -30,6 +30,10 @@ const QuizQuestionResponseSchema = z.object({
     category: z
         .string()
         .describe("A category or topic that this question belongs to"),
+    include_image: z
+        .boolean()
+        .optional()
+        .describe("Whether to include the original image with this question"),
 });
 
 // Create a schema for the array of questions without min/max validation
@@ -52,6 +56,204 @@ const supabase = createClient(
 
 // Maximum content length to send to OpenAI at once (characters)
 const MAX_CONTENT_LENGTH = 3000;
+
+// Supported image file types
+const SUPPORTED_IMAGE_TYPES = [
+    "image/png",
+    "image/jpeg",
+    "image/jpg",
+    "image/heic",
+];
+
+/**
+ * Check if a file is an image based on its MIME type
+ */
+function isImageFile(fileType: string): boolean {
+    return SUPPORTED_IMAGE_TYPES.some((type) =>
+        fileType.toLowerCase().includes(type.split("/")[1]),
+    );
+}
+
+/**
+ * Check if a file is a HEIC image based on its MIME type or extension
+ */
+function isHeicFile(file: File): boolean {
+    return (
+        file.type.toLowerCase().includes("heic") ||
+        file.name.toLowerCase().endsWith(".heic")
+    );
+}
+
+/**
+ * Upload image to Supabase Storage and get a public URL
+ */
+async function uploadImageToSupabase(
+    file: File,
+    studySetId: string,
+): Promise<string | null> {
+    try {
+        const fileExt = file.name.split(".").pop()?.toLowerCase() || "jpg";
+        const fileName = `${studySetId}_${Date.now()}.${fileExt}`;
+        const filePath = `quiz-images/${fileName}`;
+
+        const { data, error } = await supabase.storage
+            .from("study-materials")
+            .upload(filePath, file, {
+                cacheControl: "3600",
+                upsert: false,
+            });
+
+        if (error) {
+            console.error("Error uploading image to Supabase Storage:", error);
+            return null;
+        }
+
+        // Get public URL for the uploaded image
+        const { data: urlData } = supabase.storage
+            .from("study-materials")
+            .getPublicUrl(filePath);
+
+        return urlData.publicUrl;
+    } catch (error) {
+        console.error("Error in uploadImageToSupabase:", error);
+        return null;
+    }
+}
+
+/**
+ * Process an image with GPT Vision API and generate quiz questions
+ */
+async function processImageWithVision(
+    imageUrl: string,
+    numQuestions: number,
+): Promise<any[]> {
+    try {
+        // Create a schema for validation
+        const schema = createQuizArraySchema(numQuestions);
+
+        const response = await openai.beta.chat.completions.parse({
+            model: "gpt-4o",
+            messages: [
+                {
+                    role: "system",
+                    content: `You are a helpful assistant that creates educational quiz questions based on image content.
+            Carefully analyze the image.
+            
+            *** CRITICAL INSTRUCTION: Create EXACTLY ${numQuestions} multiple-choice questions. No more, no less. ***
+            
+            Each question should:
+            - Be unique and test different aspects of the content
+            - Have exactly 4 answer options that are CLEARLY DISTINCT from each other
+            - Have ONLY ONE clearly correct answer - the other 3 should be clearly incorrect
+            - Ensure incorrect options are plausible but definitively wrong
+            - Be based on what you can see in the image
+            
+            Format each question with these fields:
+            - question: The question text
+            - options: Array of 4 possible answers (MUST be substantially different from each other)
+            - answer: The EXACT text of the correct option (must match one of the options exactly)
+            - explanation: Brief explanation of why the answer is correct AND why the other options are incorrect
+            - category: A topic category this question belongs to
+            - include_image: Set to true if seeing the image is essential to answer this question (e.g., "What color is the object in the image?"), false if the question can be answered without seeing the image
+            
+            DO NOT create duplicate questions or slight variations of the same question.
+            DO NOT create options that could all be partially correct or similar to each other.
+            DO NOT include multiple correct answers or options that are variations of the same answer.
+            
+            Your response must be a JSON object with a 'quiz_questions' array containing EXACTLY ${numQuestions} questions.`,
+                },
+                {
+                    role: "user",
+                    content: [
+                        {
+                            type: "text",
+                            text: `Analyze this image and create EXACTLY ${numQuestions} unique multiple-choice questions about its content. 
+                            
+This is a strict requirement - I need exactly ${numQuestions} questions, no more and no less.
+
+Each question should have 4 answer options that are clearly different from each other, with ONLY ONE correct answer.
+Make sure the 'answer' field contains the exact text of the correct option.
+The incorrect options should be clearly wrong but plausible enough to be challenging.
+DO NOT create options that are all partially correct or just variations of the same answer.
+
+For each question, determine if seeing the image is essential to answer it correctly. If so, set include_image to true.
+For example, if the question asks "What color is the main object in the image?", include_image should be true.
+If the question can be answered without seeing the image, set include_image to false.
+
+Focus only on the image's actual content.`,
+                        },
+                        {
+                            type: "image_url",
+                            image_url: { url: imageUrl },
+                        },
+                    ],
+                },
+            ],
+            max_tokens: 4000,
+            response_format: zodResponseFormat(schema, "quiz_questions"),
+        });
+
+        console.log(
+            "Vision API response received for image, length:",
+            response.choices[0]?.message?.content?.length || 0,
+        );
+
+        const responseText = response.choices[0]?.message?.content || "{}";
+        let questions = [];
+
+        try {
+            const parsedResponse = JSON.parse(responseText);
+
+            // With the updated schema, we should always have a quiz_questions array property
+            if (
+                parsedResponse.quiz_questions &&
+                Array.isArray(parsedResponse.quiz_questions)
+            ) {
+                questions = parsedResponse.quiz_questions;
+                console.log(
+                    "Vision response has quiz_questions array with",
+                    questions.length,
+                    "questions",
+                );
+            }
+            // Handle direct array for backward compatibility
+            else if (Array.isArray(parsedResponse)) {
+                questions = parsedResponse;
+                console.log(
+                    "Vision response is a direct array with",
+                    questions.length,
+                    "questions",
+                );
+            }
+            // Handle 'questions' property for backward compatibility
+            else if (
+                parsedResponse.questions &&
+                Array.isArray(parsedResponse.questions)
+            ) {
+                questions = parsedResponse.questions;
+                console.log(
+                    "Vision response has questions array with",
+                    questions.length,
+                    "questions",
+                );
+            } else {
+                console.error(
+                    "Invalid Vision API response format:",
+                    parsedResponse,
+                );
+                questions = [];
+            }
+        } catch (jsonError) {
+            console.error("Error parsing Vision API response:", jsonError);
+            questions = [];
+        }
+
+        return questions;
+    } catch (error) {
+        console.error("Error processing image with Vision API:", error);
+        throw error;
+    }
+}
 
 /**
  * Clean the AI response to ensure valid JSON
@@ -193,25 +395,28 @@ function generateAlternativeOption(
 
 export async function POST(request: Request) {
     // Add timeout to avoid API hanging
-    const timeout = setTimeout(() => {
-        console.error("Quiz generation timed out after 60 seconds");
-    }, 60000); // 60 second timeout for debugging
+    let timeout = setTimeout(
+        () => {
+            console.log("Request timeout after 5 minutes");
+        },
+        5 * 60 * 1000,
+    );
 
     try {
         const formData = await request.formData();
         console.log("Form data received, processing request...");
 
-        const file = formData.get("file") as File;
+        let file = formData.get("file") as File | null;
         const studySetId = formData.get("studySetId") as string;
         const numQuestions = Number(formData.get("numQuestions") || "5");
-        const fileName = formData.get("fileName") as string;
-        const fileType = formData.get("fileType") as string;
+        const fileName = file
+            ? file.name
+            : (formData.get("fileName") as string);
+        let fileType = file ? file.type : (formData.get("fileType") as string);
         const fileUrl = formData.get("fileUrl") as string;
-        const fileContent = formData.get("fileContent") as string;
-
-        // Create a schema validator with the required question count
-        const responseValidator =
-            createQuizResponseSchemaWithCount(numQuestions);
+        let fileContent = formData.get("fileContent") as string;
+        const documentsJson = (formData.get("documents") as string) || "[]";
+        const documents = JSON.parse(documentsJson);
 
         if (!studySetId) {
             clearTimeout(timeout);
@@ -221,17 +426,79 @@ export async function POST(request: Request) {
             );
         }
 
-        // Check if we have the file URL for vision API or fall back to text extraction
-        let content = fileContent || "";
-        let questionType = "multiple-choice";
+        // Must have either file, fileUrl, or content
+        if (
+            !file &&
+            !fileUrl &&
+            !fileContent &&
+            (!documents || documents.length === 0)
+        ) {
+            clearTimeout(timeout);
+            return NextResponse.json(
+                { error: "No content provided to generate quiz" },
+                { status: 400 },
+            );
+        }
+
+        let imageUrl = "";
 
         console.log(
             "Processing file:",
             fileName,
             fileType,
             "Content length:",
-            content?.length || 0,
+            fileContent?.length || 0,
         );
+
+        // Check if file is HEIC - we'll log it but continue with original file
+        // since HEIC conversion should happen client-side
+        if (file && isHeicFile(file)) {
+            console.log(
+                "HEIC file detected on server. Using as is (client should convert).",
+            );
+            // Note: The client should have already converted HEIC files before uploading
+        }
+
+        // Handle Image Files (PNG, JPEG, HEIC)
+        if (file && isImageFile(fileType)) {
+            console.log("Processing image file:", fileName, fileType);
+
+            try {
+                // Upload the image to Supabase storage
+                imageUrl =
+                    (await uploadImageToSupabase(file, studySetId)) || "";
+
+                if (!imageUrl) {
+                    throw new Error("Failed to upload image to storage");
+                }
+
+                console.log("Image uploaded successfully, URL:", imageUrl);
+
+                // Process the image with Vision API
+                const questions = await processImageWithVision(
+                    imageUrl,
+                    numQuestions,
+                );
+
+                if (questions && questions.length > 0) {
+                    console.log(
+                        `Saving ${questions.length} questions from image analysis...`,
+                    );
+                    await saveQuizQuestions(questions, studySetId, imageUrl);
+                    clearTimeout(timeout);
+                    return NextResponse.json({
+                        success: true,
+                        message: "Quiz generated successfully from image",
+                        count: questions.length,
+                    });
+                } else {
+                    throw new Error("No questions generated from image");
+                }
+            } catch (imageError) {
+                console.error("Error processing image:", imageError);
+                // Continue with standard processing if image processing fails
+            }
+        }
 
         try {
             if (fileUrl && fileType.toLowerCase().includes("pdf")) {
@@ -384,7 +651,11 @@ Focus only on the document's actual content - don't reference the file format or
                             console.log(
                                 `Saving ${questions.length} questions from Vision API...`,
                             );
-                            await saveQuizQuestions(questions, studySetId);
+                            await saveQuizQuestions(
+                                questions,
+                                studySetId,
+                                imageUrl,
+                            );
                             clearTimeout(timeout);
                             return NextResponse.json({
                                 success: true,
@@ -405,20 +676,66 @@ Focus only on the document's actual content - don't reference the file format or
             }
 
             // Fall back to text extraction if Vision API fails or isn't available
-            if (file && !content) {
+            if (file && !fileContent) {
                 console.log("Extracting text from file...");
                 try {
                     if (fileType.toLowerCase().includes("pdf")) {
-                        content = await getTextFromPDF(
+                        fileContent = await getTextFromPDF(
                             await file.arrayBuffer(),
                         );
+                    } else if (isImageFile(fileType)) {
+                        // For image files, try to upload to Supabase and use Vision API if we haven't already
+                        if (!imageUrl) {
+                            imageUrl =
+                                (await uploadImageToSupabase(
+                                    file,
+                                    studySetId,
+                                )) || "";
+
+                            if (imageUrl) {
+                                console.log(
+                                    "Image uploaded successfully, URL:",
+                                    imageUrl,
+                                );
+
+                                // Process the image with Vision API
+                                const questions = await processImageWithVision(
+                                    imageUrl,
+                                    numQuestions,
+                                );
+
+                                if (questions && questions.length > 0) {
+                                    console.log(
+                                        `Saving ${questions.length} questions from image analysis...`,
+                                    );
+                                    await saveQuizQuestions(
+                                        questions,
+                                        studySetId,
+                                        imageUrl,
+                                    );
+                                    clearTimeout(timeout);
+                                    return NextResponse.json({
+                                        success: true,
+                                        message:
+                                            "Quiz generated successfully from image (fallback path)",
+                                        count: questions.length,
+                                    });
+                                }
+                            }
+                        }
+
+                        // If image processing failed, set empty content so it's handled gracefully
+                        if (!fileContent) {
+                            fileContent =
+                                "Image could not be processed as text.";
+                        }
                     } else {
                         // Handle other file types or use text directly
-                        content = await file.text();
+                        fileContent = await file.text();
                     }
                     console.log(
                         "Text extraction complete, content length:",
-                        content?.length || 0,
+                        fileContent?.length || 0,
                     );
                 } catch (extractError) {
                     console.error("Error extracting text:", extractError);
@@ -426,21 +743,21 @@ Focus only on the document's actual content - don't reference the file format or
             }
 
             // If we still need to generate questions using the text content
-            if (content) {
+            if (fileContent) {
                 console.log(
                     "Using text content for quiz generation, length:",
-                    content.length,
+                    fileContent.length,
                 );
 
                 // Try with progressively shorter content if needed
-                let contentToUse = content;
+                let contentToUse = fileContent;
                 let attempt = 1;
                 const maxAttempts = 3;
 
                 while (attempt <= maxAttempts) {
                     const maxLength =
                         attempt === 1 ? 14000 : attempt === 2 ? 8000 : 4000;
-                    contentToUse = content.substring(0, maxLength);
+                    contentToUse = fileContent.substring(0, maxLength);
 
                     console.log(
                         `Attempt ${attempt}/${maxAttempts} with content length: ${contentToUse.length}`,
@@ -626,7 +943,11 @@ Focus only on the document's actual content - don't reference the file format or
                             console.log(
                                 `Saving ${questions.length} questions...`,
                             );
-                            await saveQuizQuestions(questions, studySetId);
+                            await saveQuizQuestions(
+                                questions,
+                                studySetId,
+                                imageUrl,
+                            );
                             clearTimeout(timeout);
                             return NextResponse.json({
                                 success: true,
@@ -706,7 +1027,11 @@ Focus only on the document's actual content - don't reference the file format or
     }
 }
 
-async function saveQuizQuestions(questions: any[], studySetId: string) {
+async function saveQuizQuestions(
+    questions: any[],
+    studySetId: string,
+    imageUrl?: string,
+) {
     if (!Array.isArray(questions) || questions.length === 0) {
         console.error("saveQuizQuestions: questions is not a valid array");
         return;
@@ -865,6 +1190,15 @@ async function saveQuizQuestions(questions: any[], studySetId: string) {
                 }
             }
 
+            // Determine if we should include the image with this question
+            let relatedMaterial = null;
+            if (imageUrl && question.include_image === true) {
+                relatedMaterial = imageUrl;
+                console.log(
+                    `Including image URL with question: "${question.question.substring(0, 30)}..."`,
+                );
+            }
+
             console.log(
                 `Saving question: "${question.question.substring(0, 30)}..." with answer: "${correctAnswerText}"`,
             );
@@ -877,6 +1211,7 @@ async function saveQuizQuestions(questions: any[], studySetId: string) {
                     answer: correctAnswerText, // Store the answer text, not the index
                     category: categoryName,
                     explanation: question.explanation || "",
+                    related_material: relatedMaterial,
                 });
 
                 if (error) {

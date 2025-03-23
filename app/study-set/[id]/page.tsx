@@ -1,5 +1,24 @@
 "use client";
 
+/*
+ * HEIC Image Handling in Study Set Page:
+ *
+ * 1. In handleUpload function:
+ *   - Detects HEIC images using isHeicFile() function
+ *   - Converts HEIC images to JPEG using convertHeicToJpeg() function
+ *   - Uploads both to study-materials and files buckets
+ *   - Creates a signed URL for GPT Vision to access the image
+ *   - Passes the image URL to the generate-quiz API for analysis
+ *   - Sets related_material field for quiz questions when appropriate
+ *
+ * 2. In handleGenerateMoreQuestions function:
+ *   - Similar handling for HEIC files when generating additional questions
+ *   - Uploads converted images to files bucket for Vision API access
+ *   - Creates signed URLs for Vision API to analyze images
+ *
+ * This ensures consistency with the create-study-set page's HEIC handling.
+ */
+
 import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import supabase from "@/lib/supabase";
@@ -16,6 +35,8 @@ import {
     Trash2,
     Loader2,
     FolderOpen,
+    X,
+    BookOpen,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -61,6 +82,11 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import QuizDisplay from "@/app/components/QuizDisplay";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Badge } from "@/components/ui/badge";
+import { getTextFromPDF } from "@/app/lib/extractText";
+import { isHeicFile, convertHeicToJpeg } from "@/app/lib/heicUtilsClient";
+import FlashCardViewer, {
+    FlashCardQuestion,
+} from "@/app/components/FlashCardViewer";
 
 type StorageFile = {
     name: string;
@@ -73,6 +99,9 @@ const ACCEPTED_FILE_TYPES = [
     "application/pdf",
     "application/vnd.openxmlformats-officedocument.presentationml.presentation",
     "image/png",
+    "image/jpeg",
+    "image/jpg",
+    "image/heic",
     "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
 ];
 
@@ -116,6 +145,11 @@ export default function StudySetPage() {
     } | null>(null);
     const [categoryScores, setCategoryScores] = useState<any[]>([]);
     const [studySetScore, setStudySetScore] = useState<any | null>(null);
+    const [expandedImage, setExpandedImage] = useState<string | null>(null);
+    const [showFlashCards, setShowFlashCards] = useState(false);
+    const [flashCardQuestions, setFlashCardQuestions] = useState<
+        FlashCardQuestion[]
+    >([]);
 
     useEffect(() => {
         fetchStudySet();
@@ -289,7 +323,9 @@ export default function StudySetPage() {
         try {
             const { data, error } = await supabase
                 .from("quiz_questions")
-                .select("id, question, category, options, answer, explanation")
+                .select(
+                    "id, question, category, options, answer, explanation, related_material",
+                )
                 .eq("study_set", id);
 
             if (error) throw error;
@@ -323,6 +359,7 @@ export default function StudySetPage() {
                     answer: q.answer,
                     explanation: q.explanation || "",
                     category: q.category,
+                    related_material: q.related_material || null,
                 };
             });
 
@@ -407,7 +444,7 @@ export default function StudySetPage() {
 
         if (!ACCEPTED_FILE_TYPES.includes(selectedFile.type)) {
             toast.error(
-                "Invalid file type. Please upload PDF, PPTX, PNG, or DOCX files only.",
+                "Invalid file type. Please upload PDF, PPTX, PNG, JPEG, JPG, HEIC, or DOCX files only.",
             );
             return;
         }
@@ -429,9 +466,50 @@ export default function StudySetPage() {
             // Use a temporary name during conversion
             let tempFileName = file.name;
             let finalFileName = file.name;
+            const isImageFile = file.type.includes("image/");
 
+            // Convert HEIC to JPEG if needed
+            if (isHeicFile(file)) {
+                setIsConverting(true);
+                toast.info("Converting HEIC file to JPEG...");
+
+                try {
+                    // Wrap in a separate try-catch to handle specifically the HEIC conversion
+                    try {
+                        fileToUpload = await convertHeicToJpeg(file);
+                        // Verify the conversion was successful
+                        if (fileToUpload !== file) {
+                            finalFileName = fileToUpload.name;
+                            toast.success("HEIC file converted successfully");
+                        } else {
+                            // If the same file is returned, conversion failed but we'll continue
+                            toast.warning(
+                                "HEIC conversion wasn't successful, will use original file",
+                            );
+                        }
+                    } catch (importError) {
+                        console.error(
+                            "Error with HEIC conversion:",
+                            importError instanceof Error
+                                ? importError.message
+                                : String(importError),
+                        );
+                        toast.error(
+                            "Failed to convert HEIC file, using original",
+                        );
+                    }
+                } catch (error) {
+                    console.error(
+                        "Unexpected error in HEIC conversion:",
+                        error instanceof Error ? error.message : String(error),
+                    );
+                    toast.error("Failed to process HEIC file, using original");
+                } finally {
+                    setIsConverting(false);
+                }
+            }
             // If the file needs conversion
-            if (
+            else if (
                 file.type.includes("pdf") ||
                 file.type.includes("vnd.openxmlformats")
             ) {
@@ -527,78 +605,138 @@ export default function StudySetPage() {
                 } finally {
                     setIsConverting(false);
                 }
+            } else if (isImageFile) {
+                // For image files, we don't need conversion
+                toast.info("Processing image file...");
             }
 
             // Generate a unique folder ID for this file
             const folderId = uuidv4();
             const filePath = `${folderId}/${finalFileName}`;
 
-            // Upload the file to Supabase storage
-            const { error: uploadError } = await supabase.storage
-                .from("study-materials")
-                .upload(filePath, fileToUpload);
+            try {
+                // Step 2: Upload the file to study-materials bucket
+                const { error: uploadError } = await supabase.storage
+                    .from("study-materials")
+                    .upload(filePath, fileToUpload);
 
-            if (uploadError) {
-                throw new Error(`Upload failed: ${uploadError.message}`);
-            }
-
-            // Create a database record for the study material
-            const { error: studyMaterialError } = await supabase
-                .from("study_materials")
-                .insert({
-                    id: folderId,
-                    study_set: id,
-                });
-
-            if (studyMaterialError) {
-                throw new Error(
-                    `Failed to create study material: ${studyMaterialError.message}`,
-                );
-            }
-
-            toast.success("File uploaded successfully!");
-
-            // Generate quiz questions if requested
-            if (shouldGenerateQuiz) {
-                try {
-                    toast.info("Generating quiz questions...");
-
-                    // Extract text content from the file
-                    const fileContent = await extractTextFromFile(
-                        URL.createObjectURL(fileToUpload),
-                        fileToUpload.name,
-                        fileToUpload.type,
+                if (uploadError) {
+                    throw new Error(
+                        `Upload failed: ${uploadError.message || JSON.stringify(uploadError)}`,
                     );
-
-                    // Send content to API for quiz generation
-                    const quizFormData = new FormData();
-                    quizFormData.append("fileContent", fileContent);
-                    quizFormData.append("fileName", finalFileName);
-                    quizFormData.append("fileType", fileToUpload.type);
-                    quizFormData.append("studySetId", id as string);
-
-                    const quizResponse = await axios.post(
-                        "/api/generate-quiz",
-                        quizFormData,
-                    );
-                    const quizData = quizResponse.data;
-
-                    if (quizData.success) {
-                        toast.success(
-                            `Created ${quizData.count || 0} quiz questions!`,
-                        );
-                        fetchQuizQuestions();
-                    }
-                } catch (quizError) {
-                    console.error("Error generating quiz:", quizError);
-                    toast.error("Failed to generate quiz questions");
                 }
-            } else {
-                toast.info("File uploaded without generating quiz questions");
-            }
 
-            setFile(null);
-            fetchStudyMaterials();
+                // Step 3: Create a database record for the study material
+                const { error: studyMaterialError } = await supabase
+                    .from("study_materials")
+                    .insert({
+                        id: folderId,
+                        study_set: id,
+                    });
+
+                if (studyMaterialError) {
+                    throw new Error(
+                        `Failed to create study material: ${studyMaterialError.message || JSON.stringify(studyMaterialError)}`,
+                    );
+                }
+
+                // Step 4: Also upload file to files bucket for GPT Vision access
+                const filesPath = `${id}/${finalFileName}`;
+
+                // Upload to files bucket
+                const { error: filesUploadError } = await supabase.storage
+                    .from("files")
+                    .upload(filesPath, fileToUpload);
+
+                if (filesUploadError) {
+                    console.error(
+                        "Error uploading to files bucket:",
+                        filesUploadError.message ||
+                            JSON.stringify(filesUploadError),
+                    );
+                    // Continue anyway since we have it in study-materials
+                }
+
+                toast.success("File uploaded successfully!");
+
+                // Generate quiz questions if requested
+                if (shouldGenerateQuiz) {
+                    setIsGeneratingQuiz(true);
+                    try {
+                        toast.info("Generating quiz questions...");
+
+                        // Step 5: Get a signed URL for the file (for GPT Vision to access)
+                        let fileUrl = null;
+                        if (isImageFile || isHeicFile(file)) {
+                            const { data: urlData } = await supabase.storage
+                                .from("files")
+                                .createSignedUrl(filesPath, 60 * 60); // 1 hour expiry
+
+                            fileUrl = urlData?.signedUrl;
+                            console.log(
+                                "Using signed URL for quiz generation:",
+                                fileUrl ? "yes" : "no",
+                            );
+                        }
+
+                        // Extract text content from the file
+                        const fileContent = await extractTextFromFile(
+                            URL.createObjectURL(fileToUpload),
+                            fileToUpload.name,
+                            fileToUpload.type,
+                        );
+
+                        // Send content to API for quiz generation
+                        const quizFormData = new FormData();
+                        quizFormData.append("file", fileToUpload);
+                        quizFormData.append("studySetId", id as string);
+                        quizFormData.append("numQuestions", "5"); // Default to 5 questions
+                        quizFormData.append("fileName", finalFileName);
+                        quizFormData.append("fileType", fileToUpload.type);
+                        quizFormData.append("fileContent", fileContent);
+
+                        // Add the file URL if available (for GPT Vision)
+                        if (fileUrl) {
+                            quizFormData.append("fileUrl", fileUrl);
+                        }
+
+                        const quizResponse = await axios.post(
+                            "/api/generate-quiz",
+                            quizFormData,
+                        );
+                        const quizData = quizResponse.data;
+
+                        if (quizData.success) {
+                            toast.success(
+                                `Created ${quizData.count || 0} quiz questions!`,
+                            );
+                            fetchQuizQuestions();
+                        }
+                    } catch (quizError) {
+                        console.error("Error generating quiz:", quizError);
+                        toast.error("Failed to generate quiz questions");
+                    } finally {
+                        setIsGeneratingQuiz(false);
+                    }
+                } else {
+                    toast.info(
+                        "File uploaded without generating quiz questions",
+                    );
+                }
+
+                setFile(null);
+                fetchStudyMaterials();
+            } catch (uploadError) {
+                console.error(
+                    "Error uploading file:",
+                    uploadError instanceof Error
+                        ? uploadError.message
+                        : String(uploadError),
+                );
+                toast.error("File upload failed. Please try again.");
+                setIsUploading(false);
+                return;
+            }
         } catch (error) {
             console.error(error);
             toast.error(
@@ -619,7 +757,12 @@ export default function StudySetPage() {
             return <FileIcon className="h-5 w-5 text-red-500" />;
         } else if (lowerType === "pptx") {
             return <FileIcon className="h-5 w-5 text-orange-500" />;
-        } else if (lowerType === "png") {
+        } else if (
+            lowerType === "png" ||
+            lowerType === "jpeg" ||
+            lowerType === "jpg" ||
+            lowerType === "heic"
+        ) {
             return <FileImage className="h-5 w-5 text-blue-500" />;
         } else if (lowerType === "docx") {
             return <FileText className="h-5 w-5 text-blue-700" />;
@@ -865,33 +1008,118 @@ export default function StudySetPage() {
                 console.log(`Document type: ${fileType} for ${material.name}`);
 
                 // Create a File object
-                const file = new File([fileData], material.name, {
+                let file = new File([fileData], material.name, {
                     type: fileType,
                 });
 
-                // Get a signed URL for the file (for Vision API)
-                const { data: urlData, error: urlError } =
-                    await supabase.storage
-                        .from("study-materials")
-                        .createSignedUrl(
-                            `${material.id}/${material.name}`,
-                            60 * 60,
-                        ); // 1 hour expiry
+                let finalFileName = material.name;
 
-                if (urlError) {
-                    console.error("URL generation error:", urlError);
+                // Check if it's a HEIC file and convert if needed
+                if (isHeicFile(file)) {
+                    toast.info("Converting HEIC file for processing...");
+                    setIsConverting(true);
+
+                    try {
+                        // Try to convert HEIC to JPEG
+                        try {
+                            const convertedFile = await convertHeicToJpeg(file);
+                            // Check if conversion was successful
+                            if (convertedFile !== file) {
+                                file = convertedFile;
+                                finalFileName = convertedFile.name;
+                                toast.success(
+                                    "HEIC file converted successfully",
+                                );
+                            } else {
+                                toast.warning(
+                                    "HEIC conversion wasn't successful, using original file",
+                                );
+                            }
+                        } catch (importError) {
+                            console.error(
+                                "Error with HEIC conversion:",
+                                importError instanceof Error
+                                    ? importError.message
+                                    : String(importError),
+                            );
+                            toast.error(
+                                "Failed to convert HEIC file, using original",
+                            );
+                        }
+                    } catch (error) {
+                        console.error(
+                            "Unexpected error in HEIC conversion:",
+                            error instanceof Error
+                                ? error.message
+                                : String(error),
+                        );
+                    } finally {
+                        setIsConverting(false);
+                    }
                 }
 
-                const fileUrl = urlData?.signedUrl;
-                console.log(`Got signed URL: ${fileUrl ? "yes" : "no"}`);
+                // Upload converted file to files bucket for Vision API if it's an image
+                let fileUrl = null;
+                const isImageFile = file.type.includes("image/");
+
+                if (isImageFile || isHeicFile(file)) {
+                    // Create a path in the files bucket
+                    const filesPath = `${id}/${finalFileName}`;
+
+                    // Upload to files bucket for Vision API access
+                    const { error: filesUploadError } = await supabase.storage
+                        .from("files")
+                        .upload(filesPath, file, { upsert: true });
+
+                    if (filesUploadError) {
+                        console.error(
+                            "Error uploading to files bucket:",
+                            filesUploadError.message ||
+                                JSON.stringify(filesUploadError),
+                        );
+                    } else {
+                        // Get a signed URL for the file (for Vision API)
+                        const { data: urlData, error: urlError } =
+                            await supabase.storage
+                                .from("files")
+                                .createSignedUrl(filesPath, 60 * 60); // 1 hour expiry
+
+                        if (urlError) {
+                            console.error("URL generation error:", urlError);
+                        } else {
+                            fileUrl = urlData?.signedUrl;
+                            console.log(
+                                `Got signed URL for files bucket: ${fileUrl ? "yes" : "no"}`,
+                            );
+                        }
+                    }
+                } else {
+                    // For non-image files, still try to get a signed URL from study-materials
+                    const { data: urlData, error: urlError } =
+                        await supabase.storage
+                            .from("study-materials")
+                            .createSignedUrl(
+                                `${material.id}/${material.name}`,
+                                60 * 60,
+                            );
+
+                    if (urlError) {
+                        console.error("URL generation error:", urlError);
+                    } else {
+                        fileUrl = urlData?.signedUrl;
+                        console.log(
+                            `Got signed URL for study-materials: ${fileUrl ? "yes" : "no"}`,
+                        );
+                    }
+                }
 
                 // Extract text content
                 let fileContent = "";
                 try {
                     fileContent = await extractTextFromFile(
                         URL.createObjectURL(file),
-                        material.name,
-                        fileType,
+                        file.name,
+                        file.type,
                     );
                     console.log(
                         `Extracted content length: ${fileContent.length} characters`,
@@ -906,8 +1134,8 @@ export default function StudySetPage() {
                 formData.append("file", file);
                 formData.append("studySetId", id as string);
                 formData.append("numQuestions", String(numQuestions));
-                formData.append("fileName", material.name);
-                formData.append("fileType", fileType);
+                formData.append("fileName", finalFileName);
+                formData.append("fileType", file.type);
 
                 if (fileUrl) {
                     formData.append("fileUrl", fileUrl);
@@ -920,7 +1148,7 @@ export default function StudySetPage() {
                 }
 
                 console.log(
-                    `Sending request to generate questions for ${material.name}`,
+                    `Sending request to generate questions for ${finalFileName}`,
                 );
 
                 // Send to API
@@ -963,13 +1191,21 @@ export default function StudySetPage() {
         fileName: string,
     ): string => {
         // First check if the filename has extensions we can use
-        if (fileName.toLowerCase().endsWith(".pdf")) {
+        const lowerFileName = fileName.toLowerCase();
+        if (lowerFileName.endsWith(".pdf")) {
             return "application/pdf";
-        } else if (fileName.toLowerCase().endsWith(".png")) {
+        } else if (lowerFileName.endsWith(".png")) {
             return "image/png";
-        } else if (fileName.toLowerCase().endsWith(".docx")) {
+        } else if (
+            lowerFileName.endsWith(".jpeg") ||
+            lowerFileName.endsWith(".jpg")
+        ) {
+            return "image/jpeg";
+        } else if (lowerFileName.endsWith(".heic")) {
+            return "image/heic";
+        } else if (lowerFileName.endsWith(".docx")) {
             return "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
-        } else if (fileName.toLowerCase().endsWith(".pptx")) {
+        } else if (lowerFileName.endsWith(".pptx")) {
             return "application/vnd.openxmlformats-officedocument.presentationml.presentation";
         }
 
@@ -979,6 +1215,10 @@ export default function StudySetPage() {
             return "application/pdf";
         } else if (lowerType.includes("png")) {
             return "image/png";
+        } else if (lowerType.includes("jpeg") || lowerType.includes("jpg")) {
+            return "image/jpeg";
+        } else if (lowerType.includes("heic")) {
+            return "image/heic";
         } else if (lowerType.includes("docx")) {
             return "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
         } else if (lowerType.includes("pptx")) {
@@ -1008,6 +1248,29 @@ export default function StudySetPage() {
         } finally {
             setUnlinkingQuestion(null);
         }
+    };
+
+    const startFlashCards = () => {
+        // Get all questions and shuffle them
+        const allFlashCardQuestions = [...quizQuestions].sort(
+            () => 0.5 - Math.random(),
+        );
+
+        // Format questions for FlashCardViewer
+        const formattedFlashCardQuestions = allFlashCardQuestions.map((q) => ({
+            id: q.id,
+            question: q.question,
+            answer: q.answer,
+            explanation: q.explanation || undefined,
+            category: q.category,
+            related_material: q.related_material || null,
+        }));
+
+        setFlashCardQuestions(formattedFlashCardQuestions);
+        setShowFlashCards(true);
+        toast.success(
+            `Starting flash card review with ${formattedFlashCardQuestions.length} cards`,
+        );
     };
 
     if (!studySet) {
@@ -1049,6 +1312,36 @@ export default function StudySetPage() {
                         setShowQuiz(false);
                         fetchScores(); // Still refresh scores after quiz completion
                     }}
+                />
+            </div>
+        );
+    }
+
+    if (showFlashCards) {
+        return (
+            <div className="container mx-auto py-8 space-y-6">
+                <motion.div
+                    initial={{ opacity: 0, y: -10 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ duration: 0.5 }}
+                    className="flex justify-between items-center mb-6">
+                    <h1 className="text-3xl font-bold">
+                        {studySet.name} - Flash Cards
+                    </h1>
+                    <motion.div
+                        whileHover={{ scale: 1.05 }}
+                        whileTap={{ scale: 0.95 }}>
+                        <Button onClick={() => setShowFlashCards(false)}>
+                            Back to Study Set
+                        </Button>
+                    </motion.div>
+                </motion.div>
+
+                <FlashCardViewer
+                    questions={flashCardQuestions}
+                    isOpen={true}
+                    onClose={() => setShowFlashCards(false)}
+                    title={`${studySet.name} - Flash Cards`}
                 />
             </div>
         );
@@ -1223,8 +1516,19 @@ export default function StudySetPage() {
                                         whileTap={{ scale: 0.97 }}>
                                         <Button
                                             onClick={startQuiz}
-                                            className="w-full">
+                                            className="w-full mb-2">
                                             Take Quiz
+                                        </Button>
+                                    </motion.div>
+                                    <motion.div
+                                        whileHover={{ scale: 1.03 }}
+                                        whileTap={{ scale: 0.97 }}>
+                                        <Button
+                                            onClick={startFlashCards}
+                                            variant="outline"
+                                            className="w-full flex items-center justify-center gap-2">
+                                            <BookOpen className="h-4 w-4" />
+                                            Start Flash Cards
                                         </Button>
                                     </motion.div>
                                 </motion.div>
@@ -1307,7 +1611,7 @@ export default function StudySetPage() {
                                             id="file"
                                             type="file"
                                             onChange={handleFileChange}
-                                            accept=".pdf,.pptx,.png,.docx"
+                                            accept=".pdf,.pptx,.png,.docx,.jpeg,.jpg,.heic"
                                             disabled={
                                                 isUploading || isConverting
                                             }
@@ -1750,6 +2054,32 @@ export default function StudySetPage() {
                                 </div>
                             )}
 
+                            {selectedQuestion.related_material && (
+                                <div>
+                                    <h3 className="font-medium text-sm text-gray-500">
+                                        Related Image:
+                                    </h3>
+                                    <div
+                                        className="mt-2 overflow-hidden rounded-md border cursor-pointer transition-all hover:opacity-90"
+                                        onClick={() =>
+                                            setExpandedImage(
+                                                selectedQuestion.related_material,
+                                            )
+                                        }>
+                                        <img
+                                            src={
+                                                selectedQuestion.related_material
+                                            }
+                                            alt="Related material for question"
+                                            className="w-full h-auto max-h-[300px] object-contain"
+                                        />
+                                    </div>
+                                    <p className="text-xs text-center text-gray-500 mt-1">
+                                        Click image to expand
+                                    </p>
+                                </div>
+                            )}
+
                             {selectedQuestion.category && (
                                 <div>
                                     <h3 className="font-medium text-sm text-gray-500">
@@ -1773,6 +2103,29 @@ export default function StudySetPage() {
                             Close
                         </Button>
                     </DialogFooter>
+                </DialogContent>
+            </Dialog>
+
+            {/* Expanded Image Dialog */}
+            <Dialog
+                open={!!expandedImage}
+                onOpenChange={(open) => !open && setExpandedImage(null)}>
+                <DialogContent className="sm:max-w-4xl p-0 overflow-hidden bg-black/90">
+                    <div className="relative">
+                        <Button
+                            variant="ghost"
+                            className="absolute top-2 right-2 rounded-full bg-black/50 hover:bg-black/70 p-2 h-auto text-white"
+                            onClick={() => setExpandedImage(null)}>
+                            <X className="h-5 w-5" />
+                        </Button>
+                        <div className="flex items-center justify-center p-2">
+                            <img
+                                src={expandedImage || ""}
+                                alt="Expanded image"
+                                className="max-h-[80vh] max-w-full object-contain"
+                            />
+                        </div>
+                    </div>
                 </DialogContent>
             </Dialog>
         </div>
