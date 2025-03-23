@@ -11,6 +11,7 @@ export interface FlashCardProps {
     answer: string;
     explanation?: string;
     category?: string | { name: string } | null;
+    related_material?: string | null;
     onNext?: () => void;
     onPrevious?: () => void;
 }
@@ -20,6 +21,7 @@ export default function FlashCard({
     answer,
     explanation,
     category,
+    related_material,
     onNext,
     onPrevious,
 }: FlashCardProps) {
@@ -69,10 +71,20 @@ export default function FlashCard({
                                 )}
                             </div>
 
-                            <div className="flex-grow flex items-center justify-center p-4">
-                                <p className="text-xl font-medium text-center">
+                            <div className="flex-grow flex flex-col items-center justify-center p-4">
+                                <p className="text-xl font-medium text-center mb-4">
                                     {question}
                                 </p>
+
+                                {related_material && (
+                                    <div className="mt-2 overflow-hidden rounded-md border max-w-[350px]">
+                                        <img
+                                            src={related_material}
+                                            alt="Related image"
+                                            className="w-full h-auto max-h-[200px] object-contain"
+                                        />
+                                    </div>
+                                )}
                             </div>
 
                             <div className="flex justify-center mt-4">
@@ -118,6 +130,21 @@ export default function FlashCard({
                                         <p className="text-gray-700">
                                             {explanation}
                                         </p>
+                                    </div>
+                                )}
+
+                                {related_material && (
+                                    <div className="mt-4 border-t pt-4 w-full">
+                                        <h4 className="text-sm font-medium text-gray-500 mb-2">
+                                            Related Image:
+                                        </h4>
+                                        <div className="mt-2 overflow-hidden rounded-md border max-w-[350px] mx-auto">
+                                            <img
+                                                src={related_material}
+                                                alt="Related image"
+                                                className="w-full h-auto max-h-[200px] object-contain"
+                                            />
+                                        </div>
                                     </div>
                                 )}
                             </div>

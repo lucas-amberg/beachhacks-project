@@ -29,6 +29,7 @@ export interface FlashCardQuestion {
     answer: string;
     explanation?: string;
     category?: string | { name: string } | null;
+    related_material?: string | null;
     options?: string[];
 }
 
@@ -218,6 +219,9 @@ export default function FlashCardViewer({
                                     answer={currentQuestion.answer}
                                     explanation={currentQuestion.explanation}
                                     category={currentQuestion.category}
+                                    related_material={
+                                        currentQuestion.related_material
+                                    }
                                 />
                             )}
                         </div>
