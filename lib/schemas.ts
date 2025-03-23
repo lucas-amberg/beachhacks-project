@@ -53,3 +53,24 @@ export type DbQuizQuestion = {
 };
 
 export type QuizQuestionsResponse = z.infer<typeof QuizQuestionsResponseSchema>;
+
+// Schema for category scores
+export const CategoryScoreSchema = z.object({
+    id: z.number().optional(),
+    category_name: z.string(),
+    questions_right: z.number().int().min(0),
+    questions_solved: z.number().int().min(0),
+    created_at: z.string().optional(),
+});
+
+// Schema for study set scores
+export const StudySetScoreSchema = z.object({
+    id: z.number().or(z.string()), // Support both number and string IDs
+    questions_right: z.number().int().min(0),
+    questions_solved: z.number().int().min(0),
+    created_at: z.string().optional(),
+});
+
+// TypeScript types for scores
+export type CategoryScore = z.infer<typeof CategoryScoreSchema>;
+export type StudySetScore = z.infer<typeof StudySetScoreSchema>;
