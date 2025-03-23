@@ -15,10 +15,24 @@ import { Label } from "@/components/ui/label";
 import { Separator } from "@/components/ui/separator";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
-import { CheckCircle, XCircle, Loader2, Tag, ArrowRight } from "lucide-react";
+import {
+    CheckCircle,
+    XCircle,
+    Loader2,
+    Tag,
+    ArrowRight,
+    X,
+} from "lucide-react";
 import { toast } from "sonner";
 import supabase from "@/lib/supabase";
 import ReactConfetti from "react-confetti";
+import {
+    Dialog,
+    DialogContent,
+    DialogDescription,
+    DialogHeader,
+    DialogTitle,
+} from "@/components/ui/dialog";
 
 type CategoryScore = {
     category_name: string;
@@ -45,12 +59,43 @@ type QuizQuestion = {
     answer: string;
     explanation: string;
     category?: Category | null;
+    related_material?: string | null;
 };
 
 type QuizDisplayProps = {
     questions?: QuizQuestion[];
     studySetId?: string;
     onComplete?: (score: number, totalQuestions: number) => void;
+};
+
+// Make the dialog a separate component to isolate its behavior
+const ImageDialog = ({
+    imageUrl,
+    onClose,
+}: {
+    imageUrl: string | null;
+    onClose: () => void;
+}) => {
+    if (!imageUrl) return null;
+
+    return (
+        <Dialog
+            open={true}
+            onOpenChange={(open) => !open && onClose()}>
+            <DialogContent className="max-w-4xl max-h-[90vh] flex flex-col items-center justify-center p-2 sm:p-6">
+                <DialogTitle> </DialogTitle>
+                <div className="relative w-full">
+                    <div className="flex items-center justify-center overflow-auto max-h-[80vh]">
+                        <img
+                            src={imageUrl}
+                            alt="Expanded view"
+                            className="max-w-full max-h-[80vh] object-contain rounded-md"
+                        />
+                    </div>
+                </div>
+            </DialogContent>
+        </Dialog>
+    );
 };
 
 export default function QuizDisplay({
@@ -76,6 +121,7 @@ export default function QuizDisplay({
         null,
     );
     const [isUpdatingScores, setIsUpdatingScores] = useState(false);
+    const [expandedImage, setExpandedImage] = useState<string | null>(null);
 
     // Track window size for confetti
     useEffect(() => {
@@ -126,6 +172,7 @@ export default function QuizDisplay({
                 answer: q.answer || "",
                 explanation: q.explanation || "No explanation provided",
                 category: q.category || null,
+                related_material: q.related_material || null,
             }));
             setQuestions(validatedQuestions);
         }
@@ -197,6 +244,7 @@ export default function QuizDisplay({
                     answer: answer,
                     explanation: q.explanation || "No explanation provided.",
                     category: q.categories,
+                    related_material: q.related_material || null,
                 };
             });
 
@@ -223,7 +271,11 @@ export default function QuizDisplay({
 
     // Log when showResults changes
     useEffect(() => {
-        console.log("showResults state changed:", showResults);
+        console.log(`showResults changed to: ${showResults}`);
+        if (showResults) {
+            console.log("Fetching scores for results page");
+            fetchScores();
+        }
     }, [showResults]);
 
     const handleAnswerSelect = (value: string) => {
@@ -487,13 +539,6 @@ export default function QuizDisplay({
         }
     };
 
-    // Fetch scores when showing results
-    useEffect(() => {
-        if (showResults) {
-            fetchScores();
-        }
-    }, [showResults]);
-
     const handleNextOrFinish = () => {
         if (showFeedback) {
             // If we're showing feedback, move to next question
@@ -502,19 +547,26 @@ export default function QuizDisplay({
 
             if (!isLastQuestion) {
                 // Move to next question
+                console.log(
+                    `Moving to next question: ${currentQuestionIndex + 1}`,
+                );
                 setCurrentQuestionIndex(currentQuestionIndex + 1);
             } else {
                 // Finished quiz, show results
-                console.log("Last question completed, showing results");
+                console.log("Last question completed, showing results now");
                 setShowResults(true);
 
                 // Call onComplete with the final score
                 if (onComplete) {
+                    console.log(
+                        `Calling onComplete with score: ${score}/${questions.length}`,
+                    );
                     onComplete(score, questions.length);
                 }
             }
         } else {
             // Show feedback for the current question
+            console.log("Checking answer for current question");
             checkAnswer();
         }
     };
@@ -528,8 +580,9 @@ export default function QuizDisplay({
         setSelectedOption(null);
     };
 
-    const isAnswerSelected = !!selectedOption;
-    const isCorrectAnswer = selectedOption === currentQuestion.answer;
+    const isAnswerSelected = selectedOption ? true : false;
+    const isCorrectAnswer =
+        currentQuestion && selectedOption === currentQuestion.answer;
 
     const renderFeedback = () => {
         return (
@@ -730,6 +783,28 @@ export default function QuizDisplay({
                                                     </Badge>
                                                 )}
                                             </div>
+
+                                            {question.related_material && (
+                                                <div className="my-2">
+                                                    <img
+                                                        src={
+                                                            question.related_material
+                                                        }
+                                                        alt={`Image for question ${index + 1}`}
+                                                        className="max-w-full rounded-md shadow-sm cursor-pointer hover:opacity-90 transition-opacity"
+                                                        style={{
+                                                            maxHeight: "200px",
+                                                        }}
+                                                        onClick={() =>
+                                                            question.related_material &&
+                                                            setExpandedImage(
+                                                                question.related_material,
+                                                            )
+                                                        }
+                                                    />
+                                                </div>
+                                            )}
+
                                             <div className="mt-2 text-sm">
                                                 <p className="font-medium">
                                                     Your answer:{" "}
@@ -786,9 +861,11 @@ export default function QuizDisplay({
         );
     };
 
-    // Make sure we render the correct UI based on the state
+    // Update the renderUI function to safely handle state transitions
     const renderUI = () => {
+        // First handle special states
         if (isLoading) {
+            console.log("Rendering loading state");
             return (
                 <div className="flex justify-center py-12">
                     <div className="text-center">
@@ -799,11 +876,15 @@ export default function QuizDisplay({
             );
         }
 
+        // Handle showing results - this needs to come before currentQuestion check
         if (showResults) {
+            console.log("Rendering results view");
             return renderResults();
         }
 
-        if (!currentQuestion) {
+        // Check if questions are available
+        if (!questions.length) {
+            console.log("No questions available");
             return (
                 <div className="text-center py-12">
                     <Alert variant="destructive">
@@ -815,7 +896,22 @@ export default function QuizDisplay({
             );
         }
 
+        // Check if current question exists
+        if (!currentQuestion) {
+            console.log("Current question is null, but questions exist");
+            return (
+                <div className="text-center py-12">
+                    <Alert variant="destructive">
+                        <AlertDescription>
+                            Error loading question. Please try again.
+                        </AlertDescription>
+                    </Alert>
+                </div>
+            );
+        }
+
         // Default: render the quiz question
+        console.log(`Rendering question ${currentQuestionIndex + 1}`);
         return (
             <Card className="w-full max-w-3xl mx-auto">
                 <CardHeader>
@@ -842,6 +938,22 @@ export default function QuizDisplay({
                     </CardDescription>
                 </CardHeader>
                 <CardContent>
+                    {currentQuestion.related_material && (
+                        <div className="mb-4">
+                            <img
+                                src={currentQuestion.related_material}
+                                alt="Question image"
+                                className="max-w-full rounded-md mx-auto shadow-md mb-4 cursor-pointer hover:opacity-90 transition-opacity"
+                                style={{ maxHeight: "300px" }}
+                                onClick={() =>
+                                    currentQuestion.related_material &&
+                                    setExpandedImage(
+                                        currentQuestion.related_material,
+                                    )
+                                }
+                            />
+                        </div>
+                    )}
                     <RadioGroup
                         value={selectedOption || ""}
                         onValueChange={handleAnswerSelect}
@@ -907,5 +1019,13 @@ export default function QuizDisplay({
     };
 
     // Return the appropriate UI based on state
-    return renderUI();
+    return (
+        <>
+            {renderUI()}
+            <ImageDialog
+                imageUrl={expandedImage}
+                onClose={() => setExpandedImage(null)}
+            />
+        </>
+    );
 }

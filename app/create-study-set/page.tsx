@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import supabase from "@/lib/supabase";
 import { v4 as uuidv4 } from "uuid";
@@ -18,11 +18,15 @@ import {
 import { toast } from "sonner";
 import axios from "axios";
 import { getTextFromPDF } from "@/app/lib/extractText";
+import { isHeicFile, convertHeicToJpeg } from "@/app/lib/heicUtilsClient";
 
 const ACCEPTED_FILE_TYPES = [
     "application/pdf",
     "application/vnd.openxmlformats-officedocument.presentationml.presentation",
     "image/png",
+    "image/jpeg",
+    "image/jpg",
+    "image/heic",
     "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
 ];
 
@@ -44,7 +48,7 @@ export default function CreateStudySetPage() {
 
         if (!ACCEPTED_FILE_TYPES.includes(selectedFile.type)) {
             toast.error(
-                "Invalid file type. Please upload PDF, PPTX, PNG, or DOCX files only.",
+                "Invalid file type. Please upload PDF, PPTX, PNG, JPEG, JPG, HEIC, or DOCX files only.",
             );
             return;
         }
@@ -132,9 +136,51 @@ export default function CreateStudySetPage() {
             // Use a temporary name during conversion
             let tempFileName = file.name;
             let finalFileName = file.name;
+            let isImageFile = file.type.includes("image/");
 
+            // Convert HEIC to JPEG if needed
+            if (isHeicFile(file)) {
+                setIsConverting(true);
+                toast.info("Converting HEIC file to JPEG...");
+
+                try {
+                    // Wrap in a separate try-catch to handle specifically the HEIC conversion
+                    try {
+                        fileToUpload = await convertHeicToJpeg(file);
+                        // Verify the conversion was successful
+                        if (fileToUpload !== file) {
+                            finalFileName = fileToUpload.name;
+                            isImageFile = true; // Update image flag since we now have a JPEG
+                            toast.success("HEIC file converted successfully");
+                        } else {
+                            // If the same file is returned, conversion failed but we'll continue
+                            toast.warning(
+                                "HEIC conversion wasn't successful, will use original file",
+                            );
+                        }
+                    } catch (importError) {
+                        console.error(
+                            "Error with HEIC conversion:",
+                            importError instanceof Error
+                                ? importError.message
+                                : String(importError),
+                        );
+                        toast.error(
+                            "Failed to convert HEIC file, using original",
+                        );
+                    }
+                } catch (error) {
+                    console.error(
+                        "Unexpected error in HEIC conversion:",
+                        error instanceof Error ? error.message : String(error),
+                    );
+                    toast.error("Failed to process HEIC file, using original");
+                } finally {
+                    setIsConverting(false);
+                }
+            }
             // Convert files if needed
-            if (
+            else if (
                 file.type.includes("pdf") ||
                 file.type.includes("vnd.openxmlformats")
             ) {
@@ -218,6 +264,9 @@ export default function CreateStudySetPage() {
                 } finally {
                     setIsConverting(false);
                 }
+            } else if (isImageFile) {
+                // For image files, we don't need conversion
+                toast.info("Processing image file...");
             }
 
             // Step 3: Upload the file to study-materials folder
@@ -267,7 +316,8 @@ export default function CreateStudySetPage() {
             if (filesUploadError) {
                 console.error(
                     "Error uploading to files bucket:",
-                    filesUploadError as Error,
+                    filesUploadError.message ||
+                        JSON.stringify(filesUploadError),
                 );
                 // Continue anyway since we have it in study-materials
             } else {
@@ -449,10 +499,11 @@ export default function CreateStudySetPage() {
                                 onChange={handleFileChange}
                                 className="w-full"
                                 disabled={isUploading}
-                                accept=".pdf,.pptx,.png,.docx"
+                                accept=".pdf,.pptx,.png,.docx,.jpeg,.jpg,.heic"
                             />
                             <p className="text-xs text-muted-foreground mt-1">
-                                Supported formats: PDF, PPTX, PNG, DOCX
+                                Supported formats: PDF, PPTX, PNG, DOCX, JPEG,
+                                JPG, HEIC
                             </p>
                         </div>
 
