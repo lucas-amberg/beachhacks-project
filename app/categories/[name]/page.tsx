@@ -358,6 +358,7 @@ export default function CategoryPage() {
             answer: q.answer,
             explanation: q.explanation || undefined,
             category: q.category,
+            related_material: q.related_material || null,
         }));
 
         setFlashCardQuestions(formattedFlashCardQuestions);

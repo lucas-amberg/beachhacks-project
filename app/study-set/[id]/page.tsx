@@ -36,6 +36,7 @@ import {
     Loader2,
     FolderOpen,
     X,
+    BookOpen,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -83,6 +84,9 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Badge } from "@/components/ui/badge";
 import { getTextFromPDF } from "@/app/lib/extractText";
 import { isHeicFile, convertHeicToJpeg } from "@/app/lib/heicUtilsClient";
+import FlashCardViewer, {
+    FlashCardQuestion,
+} from "@/app/components/FlashCardViewer";
 
 type StorageFile = {
     name: string;
@@ -142,6 +146,10 @@ export default function StudySetPage() {
     const [categoryScores, setCategoryScores] = useState<any[]>([]);
     const [studySetScore, setStudySetScore] = useState<any | null>(null);
     const [expandedImage, setExpandedImage] = useState<string | null>(null);
+    const [showFlashCards, setShowFlashCards] = useState(false);
+    const [flashCardQuestions, setFlashCardQuestions] = useState<
+        FlashCardQuestion[]
+    >([]);
 
     useEffect(() => {
         fetchStudySet();
@@ -1242,6 +1250,29 @@ export default function StudySetPage() {
         }
     };
 
+    const startFlashCards = () => {
+        // Get all questions and shuffle them
+        const allFlashCardQuestions = [...quizQuestions].sort(
+            () => 0.5 - Math.random(),
+        );
+
+        // Format questions for FlashCardViewer
+        const formattedFlashCardQuestions = allFlashCardQuestions.map((q) => ({
+            id: q.id,
+            question: q.question,
+            answer: q.answer,
+            explanation: q.explanation || undefined,
+            category: q.category,
+            related_material: q.related_material || null,
+        }));
+
+        setFlashCardQuestions(formattedFlashCardQuestions);
+        setShowFlashCards(true);
+        toast.success(
+            `Starting flash card review with ${formattedFlashCardQuestions.length} cards`,
+        );
+    };
+
     if (!studySet) {
         return (
             <div className="flex justify-center items-center h-full">
@@ -1281,6 +1312,36 @@ export default function StudySetPage() {
                         setShowQuiz(false);
                         fetchScores(); // Still refresh scores after quiz completion
                     }}
+                />
+            </div>
+        );
+    }
+
+    if (showFlashCards) {
+        return (
+            <div className="container mx-auto py-8 space-y-6">
+                <motion.div
+                    initial={{ opacity: 0, y: -10 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ duration: 0.5 }}
+                    className="flex justify-between items-center mb-6">
+                    <h1 className="text-3xl font-bold">
+                        {studySet.name} - Flash Cards
+                    </h1>
+                    <motion.div
+                        whileHover={{ scale: 1.05 }}
+                        whileTap={{ scale: 0.95 }}>
+                        <Button onClick={() => setShowFlashCards(false)}>
+                            Back to Study Set
+                        </Button>
+                    </motion.div>
+                </motion.div>
+
+                <FlashCardViewer
+                    questions={flashCardQuestions}
+                    isOpen={true}
+                    onClose={() => setShowFlashCards(false)}
+                    title={`${studySet.name} - Flash Cards`}
                 />
             </div>
         );
@@ -1455,8 +1516,19 @@ export default function StudySetPage() {
                                         whileTap={{ scale: 0.97 }}>
                                         <Button
                                             onClick={startQuiz}
-                                            className="w-full">
+                                            className="w-full mb-2">
                                             Take Quiz
+                                        </Button>
+                                    </motion.div>
+                                    <motion.div
+                                        whileHover={{ scale: 1.03 }}
+                                        whileTap={{ scale: 0.97 }}>
+                                        <Button
+                                            onClick={startFlashCards}
+                                            variant="outline"
+                                            className="w-full flex items-center justify-center gap-2">
+                                            <BookOpen className="h-4 w-4" />
+                                            Start Flash Cards
                                         </Button>
                                     </motion.div>
                                 </motion.div>
