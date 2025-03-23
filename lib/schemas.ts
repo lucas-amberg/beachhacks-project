@@ -8,6 +8,7 @@ export const QuizQuestionSchema = z
         answer: z.string(),
         category: z.string(),
         explanation: z.string().optional(),
+        related_material: z.string().nullable().optional(),
     })
     .refine((data) => data.answer !== undefined || data.answer !== undefined, {
         message: "Either answer or answer must be provided",
@@ -50,6 +51,7 @@ export type DbQuizQuestion = {
     category: string;
     created_at?: string;
     category_obj?: Category;
+    related_material?: string | null;
 };
 
 export type QuizQuestionsResponse = z.infer<typeof QuizQuestionsResponseSchema>;
