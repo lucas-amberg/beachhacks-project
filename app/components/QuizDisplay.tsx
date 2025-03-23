@@ -245,7 +245,7 @@ export default function QuizDisplay({
         }
 
         // Update score in database
-        if (studySetId && currentQuestion) {
+        if (currentQuestion) {
             updateQuizScores(
                 selectedOption === currentQuestion.answer,
                 currentQuestion,
@@ -257,8 +257,6 @@ export default function QuizDisplay({
         isCorrect: boolean,
         question: QuizQuestion,
     ) => {
-        if (!studySetId) return;
-
         try {
             // Get the category name from the question, handling different possible formats
             let categoryName = "Uncategorized";
@@ -278,67 +276,78 @@ export default function QuizDisplay({
 
             console.log("Using category name for scoring:", categoryName);
 
-            // Update study_set_scores
-            const { data: studySetData, error: studySetError } = await supabase
-                .from("study_set_scores")
-                .select("*")
-                .eq("id", studySetId)
-                .single();
+            // Update study_set_scores - only if studySetId is provided
+            if (studySetId) {
+                const { data: studySetData, error: studySetError } =
+                    await supabase
+                        .from("study_set_scores")
+                        .select("*")
+                        .eq("id", studySetId)
+                        .single();
 
-            if (studySetError && studySetError.code !== "PGRST116") {
-                console.error("Error fetching study set score:", studySetError);
-                return;
+                if (studySetError && studySetError.code !== "PGRST116") {
+                    console.error(
+                        "Error fetching study set score:",
+                        studySetError,
+                    );
+                    // Continue to update category scores even if study set score fails
+                } else {
+                    // If study set score exists, update it, otherwise create it
+                    if (studySetData) {
+                        await supabase
+                            .from("study_set_scores")
+                            .update({
+                                questions_right: isCorrect
+                                    ? studySetData.questions_right + 1
+                                    : studySetData.questions_right,
+                                questions_solved:
+                                    studySetData.questions_solved + 1,
+                            })
+                            .eq("id", studySetId);
+                    } else {
+                        await supabase.from("study_set_scores").insert({
+                            id: studySetId,
+                            questions_right: isCorrect ? 1 : 0,
+                            questions_solved: 1,
+                        });
+                    }
+                }
             }
 
-            // If study set score exists, update it, otherwise create it
-            if (studySetData) {
-                await supabase
-                    .from("study_set_scores")
-                    .update({
-                        questions_right: isCorrect
-                            ? studySetData.questions_right + 1
-                            : studySetData.questions_right,
-                        questions_solved: studySetData.questions_solved + 1,
-                    })
-                    .eq("id", studySetId);
-            } else {
-                await supabase.from("study_set_scores").insert({
-                    id: studySetId,
-                    questions_right: isCorrect ? 1 : 0,
-                    questions_solved: 1,
-                });
-            }
+            // Always update category_scores, regardless of studySetId
+            if (
+                categoryName &&
+                typeof categoryName === "string" &&
+                categoryName.trim() !== ""
+            ) {
+                const { data: categoryData, error: categoryError } =
+                    await supabase
+                        .from("category_scores")
+                        .select("*")
+                        .eq("category_name", categoryName)
+                        .single();
 
-            // Update category_scores
-            const { data: categoryData, error: categoryError } = await supabase
-                .from("category_scores")
-                .select("*")
-                .eq("category_name", categoryName)
-                .single();
+                if (categoryError && categoryError.code !== "PGRST116") {
+                    console.error(
+                        "Error fetching category score:",
+                        categoryError,
+                    );
+                    return;
+                }
 
-            if (categoryError && categoryError.code !== "PGRST116") {
-                console.error("Error fetching category score:", categoryError);
-                return;
-            }
-
-            // If category score exists, update it, otherwise create it
-            if (categoryData) {
-                await supabase
-                    .from("category_scores")
-                    .update({
-                        questions_right: isCorrect
-                            ? categoryData.questions_right + 1
-                            : categoryData.questions_right,
-                        questions_solved: categoryData.questions_solved + 1,
-                    })
-                    .eq("category_name", categoryName);
-            } else {
-                // Make sure we have a valid category name before inserting
-                if (
-                    categoryName &&
-                    typeof categoryName === "string" &&
-                    categoryName.trim() !== ""
-                ) {
+                // If category score exists, update it, otherwise create it
+                if (categoryData) {
+                    await supabase
+                        .from("category_scores")
+                        .update({
+                            questions_right: isCorrect
+                                ? categoryData.questions_right + 1
+                                : categoryData.questions_right,
+                            questions_solved: categoryData.questions_solved + 1,
+                        })
+                        .eq("category_name", categoryName);
+                } else {
+                    // Make sure we have a valid category name before inserting
                     console.log(
                         "Creating new category score for:",
                         categoryName,
@@ -359,12 +368,12 @@ export default function QuizDisplay({
                             data,
                         );
                     }
-                } else {
-                    console.error(
-                        "Invalid category name for insertion:",
-                        categoryName,
-                    );
                 }
+            } else {
+                console.error(
+                    "Invalid category name for insertion:",
+                    categoryName,
+                );
             }
         } catch (error) {
             console.error("Error updating quiz scores:", error);
@@ -372,32 +381,36 @@ export default function QuizDisplay({
     };
 
     const fetchScores = async () => {
-        if (!studySetId) return;
-
         setIsUpdatingScores(true);
         try {
-            // Fetch study set score
-            const { data: studySetData, error: studySetError } = await supabase
-                .from("study_set_scores")
-                .select("*")
-                .eq("id", studySetId)
-                .single();
+            // Fetch study set score if studySetId is provided
+            if (studySetId) {
+                const { data: studySetData, error: studySetError } =
+                    await supabase
+                        .from("study_set_scores")
+                        .select("*")
+                        .eq("id", studySetId)
+                        .single();
 
-            if (studySetError && studySetError.code !== "PGRST116") {
-                console.error("Error fetching study set score:", studySetError);
-            } else if (studySetData) {
-                const percentage =
-                    studySetData.questions_solved > 0
-                        ? (studySetData.questions_right /
-                              studySetData.questions_solved) *
-                          100
-                        : 0;
+                if (studySetError && studySetError.code !== "PGRST116") {
+                    console.error(
+                        "Error fetching study set score:",
+                        studySetError,
+                    );
+                } else if (studySetData) {
+                    const percentage =
+                        studySetData.questions_solved > 0
+                            ? (studySetData.questions_right /
+                                  studySetData.questions_solved) *
+                              100
+                            : 0;
 
-                setStudySetScore({
-                    questions_right: studySetData.questions_right,
-                    questions_solved: studySetData.questions_solved,
-                    percentage,
-                });
+                    setStudySetScore({
+                        questions_right: studySetData.questions_right,
+                        questions_solved: studySetData.questions_solved,
+                        percentage,
+                    });
+                }
             }
 
             // Get unique categories from the quiz questions
@@ -476,12 +489,12 @@ export default function QuizDisplay({
 
     // Fetch scores when showing results
     useEffect(() => {
-        if (showResults && studySetId) {
+        if (showResults) {
             fetchScores();
         }
-    }, [showResults, studySetId]);
+    }, [showResults]);
 
-    const handleNext = () => {
+    const handleNextOrFinish = () => {
         if (showFeedback) {
             // If we're showing feedback, move to next question
             setShowFeedback(false);
@@ -495,7 +508,10 @@ export default function QuizDisplay({
                 console.log("Last question completed, showing results");
                 setShowResults(true);
 
-                // Don't call onComplete here - let the user click "Back to Study Set" button instead
+                // Call onComplete with the final score
+                if (onComplete) {
+                    onComplete(score, questions.length);
+                }
             }
         } else {
             // Show feedback for the current question
@@ -774,55 +790,29 @@ export default function QuizDisplay({
     const renderUI = () => {
         if (isLoading) {
             return (
-                <Card className="w-full max-w-3xl mx-auto">
-                    <CardHeader>
-                        <CardTitle>Loading Quiz Questions</CardTitle>
-                    </CardHeader>
-                    <CardContent className="flex justify-center py-8">
-                        <Loader2 className="h-8 w-8 animate-spin text-primary" />
-                    </CardContent>
-                </Card>
-            );
-        }
-
-        if (!questions || questions.length === 0) {
-            return (
-                <Card className="w-full max-w-3xl mx-auto">
-                    <CardHeader>
-                        <CardTitle>No Questions Available</CardTitle>
-                        <CardDescription>
-                            No quiz questions have been generated for this study
-                            set yet.
-                        </CardDescription>
-                    </CardHeader>
-                </Card>
-            );
-        }
-
-        // Check if currentQuestion exists before trying to render it
-        if (!currentQuestion) {
-            return (
-                <Card className="w-full max-w-3xl mx-auto">
-                    <CardHeader>
-                        <CardTitle>Quiz Error</CardTitle>
-                        <CardDescription>
-                            There was a problem loading the current question.
-                        </CardDescription>
-                    </CardHeader>
-                    <CardContent>
-                        <Button
-                            onClick={() => setCurrentQuestionIndex(0)}
-                            className="w-full">
-                            Try Again
-                        </Button>
-                    </CardContent>
-                </Card>
+                <div className="flex justify-center py-12">
+                    <div className="text-center">
+                        <Loader2 className="h-8 w-8 animate-spin mx-auto mb-4 text-primary" />
+                        <p>Loading quiz questions...</p>
+                    </div>
+                </div>
             );
         }
 
         if (showResults) {
-            console.log("Rendering results screen from renderUI");
             return renderResults();
+        }
+
+        if (!currentQuestion) {
+            return (
+                <div className="text-center py-12">
+                    <Alert variant="destructive">
+                        <AlertDescription>
+                            No questions available for this quiz
+                        </AlertDescription>
+                    </Alert>
+                </div>
+            );
         }
 
         // Default: render the quiz question
@@ -895,16 +885,7 @@ export default function QuizDisplay({
                 </CardContent>
                 <CardFooter>
                     <Button
-                        onClick={
-                            showFeedback && isLastQuestion
-                                ? () => {
-                                      console.log("Finish Quiz button clicked");
-                                      setShowFeedback(false);
-                                      setSelectedOption(null);
-                                      setShowResults(true);
-                                  }
-                                : handleNext
-                        }
+                        onClick={handleNextOrFinish}
                         disabled={!isAnswerSelected && !showFeedback}
                         className="w-full flex items-center justify-center gap-2">
                         {showFeedback ? (

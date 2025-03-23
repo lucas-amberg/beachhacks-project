@@ -19,11 +19,8 @@ import {
     AlertCircle,
     ArrowLeft,
     ChevronRight,
-    PlayCircle,
-    Check,
-    X,
-    RefreshCw,
     Brain,
+    Loader2,
 } from "lucide-react";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Alert, AlertDescription } from "@/components/ui/alert";
@@ -35,13 +32,32 @@ import {
     AccordionTrigger,
 } from "@/components/ui/accordion";
 import { Progress } from "@/components/ui/progress";
+import {
+    Dialog,
+    DialogContent,
+    DialogDescription,
+    DialogFooter,
+    DialogHeader,
+    DialogTitle,
+} from "@/components/ui/dialog";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { shuffle } from "lodash";
-import dynamic from "next/dynamic";
 import { toast } from "sonner";
+import { motion, AnimatePresence } from "framer-motion";
+import QuizDisplay from "@/app/components/QuizDisplay";
 
-// Dynamically import Confetti with SSR disabled to prevent hydration issues
-const Confetti = dynamic(() => import("react-confetti"), { ssr: false });
+// Define a compatible type for the QuizDisplay component
+interface QuizQuestion {
+    id: string;
+    question: string;
+    options: string[];
+    answer: string;
+    explanation: string;
+    category?: {
+        id?: number;
+        name: string;
+    } | null;
+}
 
 type Question = {
     id: number;
@@ -49,6 +65,10 @@ type Question = {
     options: string[];
     answer: string;
     explanation?: string;
+    category?: {
+        id?: number;
+        name: string;
+    } | null;
 };
 
 type Category = {
@@ -56,185 +76,178 @@ type Category = {
     created_at?: string;
 };
 
-type QuizState = {
-    inProgress: boolean;
-    currentQuestionIndex: number;
-    questions: Question[];
-    userAnswers: Record<number, string>;
-    showResults: boolean;
-    selectedAnswer: string | null;
-    submittedAnswer: boolean;
-};
-
-type ScoreResult = {
-    correct: number;
-    total: number;
-    percentage: number;
+type CategoryScore = {
+    id: number;
+    category_name: string;
+    questions_right: number;
+    questions_solved: number;
 };
 
 export default function CategoryPage() {
     const params = useParams();
-    const categoryName =
-        typeof params.name === "string" ? decodeURIComponent(params.name) : "";
     const router = useRouter();
     const [category, setCategory] = useState<Category | null>(null);
     const [questions, setQuestions] = useState<Question[]>([]);
-    const [searchTerm, setSearchTerm] = useState("");
+    const [filteredQuestions, setFilteredQuestions] = useState<Question[]>([]);
     const [isLoading, setIsLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
     const [expandedQuestionId, setExpandedQuestionId] = useState<number | null>(
         null,
     );
-    const [activeTab, setActiveTab] = useState<string>("browse");
-    const [windowSize, setWindowSize] = useState({ width: 0, height: 0 });
+    const [activeTab, setActiveTab] = useState("browse");
+    const [searchQuery, setSearchQuery] = useState("");
     const [selectedQuestionCount, setSelectedQuestionCount] = useState<
-        number | string
-    >(5);
-
-    // Quiz state
-    const [quizState, setQuizState] = useState<QuizState>({
-        inProgress: false,
-        currentQuestionIndex: 0,
-        questions: [],
-        userAnswers: {},
-        showResults: false,
-        selectedAnswer: null,
-        submittedAnswer: false,
+        string | number
+    >(10);
+    const [quizQuestions, setQuizQuestions] = useState<QuizQuestion[]>([]);
+    const [showQuiz, setShowQuiz] = useState(false);
+    const [categoryScore, setCategoryScore] = useState<CategoryScore | null>(
+        null,
+    );
+    const [fetchingScore, setFetchingScore] = useState(false);
+    const [windowSize, setWindowSize] = useState({
+        width: 0,
+        height: 0,
     });
 
+    // New state for question dialog
+    const [selectedQuestion, setSelectedQuestion] = useState<Question | null>(
+        null,
+    );
+
+    // Effect to update window size for confetti
     useEffect(() => {
-        if (categoryName) {
-            fetchCategoryAndQuestions();
+        if (typeof window !== "undefined") {
+            const handleResize = () => {
+                setWindowSize({
+                    width: window.innerWidth,
+                    height: window.innerHeight,
+                });
+            };
+
+            handleResize();
+            window.addEventListener("resize", handleResize);
+            return () => window.removeEventListener("resize", handleResize);
         }
+    }, []);
 
-        // Set window size for confetti
-        const handleResize = () => {
-            setWindowSize({
-                width: window.innerWidth,
-                height: window.innerHeight,
-            });
-        };
+    useEffect(() => {
+        if (params.name) {
+            fetchCategoryAndQuestions();
+            fetchCategoryScore();
+        }
+    }, [params.name]);
 
-        // Initial size
-        handleResize();
+    useEffect(() => {
+        if (searchQuery.trim() === "") {
+            setFilteredQuestions(questions);
+        } else {
+            const filtered = questions.filter(
+                (q) =>
+                    q.question
+                        .toLowerCase()
+                        .includes(searchQuery.toLowerCase()) ||
+                    q.answer.toLowerCase().includes(searchQuery.toLowerCase()),
+            );
+            setFilteredQuestions(filtered);
+        }
+    }, [searchQuery, questions]);
 
-        // Add event listener
-        window.addEventListener("resize", handleResize);
+    const fetchCategoryScore = async () => {
+        setFetchingScore(true);
+        try {
+            const categoryName = decodeURIComponent(params.name as string);
 
-        // Cleanup
-        return () => window.removeEventListener("resize", handleResize);
-    }, [categoryName]);
+            // Fetch category score
+            const { data, error } = await supabase
+                .from("category_scores")
+                .select("*")
+                .eq("category_name", categoryName)
+                .single();
+
+            if (error && error.code !== "PGRST116") {
+                console.error("Error fetching category score:", error);
+                return;
+            }
+
+            if (data) {
+                setCategoryScore(data);
+            }
+        } catch (error) {
+            console.error("Error fetching category score:", error);
+        } finally {
+            setFetchingScore(false);
+        }
+    };
 
     const fetchCategoryAndQuestions = async () => {
         setIsLoading(true);
         setError(null);
-
         try {
-            // Check if Supabase is properly initialized
-            if (!supabase) {
-                setError(
-                    "Database connection not available. Please try again later.",
+            const categoryName = decodeURIComponent(params.name as string);
+
+            // Get questions from this category
+            const { data: questionsData, error: questionsError } =
+                await supabase
+                    .from("quiz_questions")
+                    .select("*")
+                    .eq("category", categoryName);
+
+            if (questionsError) {
+                throw new Error(
+                    `Error fetching questions: ${questionsError.message}`,
                 );
-                setIsLoading(false);
-                return;
             }
 
-            // Fetch category details
-            const { data: categoryData, error: categoryError } = await supabase
-                .from("categories")
-                .select("name, created_at")
-                .eq("name", categoryName)
-                .single();
-
-            if (categoryError) {
-                setError(`Error fetching category: ${categoryError.message}`);
-                setIsLoading(false);
-                return;
-            }
-
-            if (!categoryData) {
-                setError("Category not found");
-                setIsLoading(false);
-                return;
-            }
-
-            setCategory(categoryData);
-
-            try {
-                // Fetch questions for this category
-                const { data: questionsData, error: questionsError } =
-                    await supabase
-                        .from("quiz_questions")
-                        .select("*")
-                        .eq("category", categoryName);
-
-                if (questionsError) {
-                    setError(
-                        `Error fetching questions: ${questionsError.message}`,
-                    );
-                    setIsLoading(false);
-                    return;
-                }
-
-                if (!questionsData) {
-                    setQuestions([]);
-                    setIsLoading(false);
-                    return;
-                }
-
+            const formattedQuestions = questionsData.map((q) => {
+                // Parse options array if needed
+                let options = [];
                 try {
-                    const formattedQuestions = questionsData.map((q) => {
-                        let parsedOptions = [];
-
-                        try {
-                            parsedOptions =
-                                typeof q.options === "string"
-                                    ? JSON.parse(q.options)
-                                    : Array.isArray(q.options)
-                                      ? q.options
-                                      : [];
-                        } catch (parseError) {
-                            console.warn(
-                                "Error parsing options for question:",
-                                q.id,
-                                parseError,
-                            );
-                            parsedOptions = [];
-                        }
-
-                        return {
-                            id: q.id,
-                            question: q.question,
-                            options: parsedOptions,
-                            answer: q.answer,
-                            explanation: q.explanation,
-                        };
-                    });
-
-                    // Filter out questions without options
-                    const validQuestions = formattedQuestions.filter(
-                        (q) => q.options.length > 0,
-                    );
-                    setQuestions(validQuestions);
-                } catch (formatError) {
-                    console.error("Error formatting questions:", formatError);
-                    setError("Error processing question data");
+                    options = Array.isArray(q.options)
+                        ? q.options
+                        : JSON.parse(q.options);
+                } catch (e) {
+                    console.error("Error parsing options:", e);
+                    options = [];
                 }
-            } catch (questionsError) {
-                console.error("Error in question fetch:", questionsError);
-                setError("Failed to load questions");
-            }
+
+                const answer =
+                    typeof q.answer === "string"
+                        ? q.answer
+                        : typeof q.answer === "number" && options.length > 0
+                          ? options[q.answer]
+                          : "";
+
+                return {
+                    id: q.id,
+                    question: q.question || "No question text available",
+                    options: options,
+                    answer: answer,
+                    explanation: q.explanation || "No explanation provided.",
+                    category: {
+                        name: categoryName,
+                    },
+                };
+            });
+
+            setCategory({ name: categoryName });
+            setQuestions(formattedQuestions);
+            setFilteredQuestions(formattedQuestions);
+
+            // Set default question count to min(10, total questions)
+            const defaultCount = Math.min(10, formattedQuestions.length);
+            setSelectedQuestionCount(defaultCount > 0 ? defaultCount : 1);
         } catch (error) {
-            console.error("Error fetching category data:", error);
-            setError("An unexpected error occurred. Please try again later.");
+            console.error("Error fetching data:", error);
+            setError(
+                error instanceof Error
+                    ? error.message
+                    : "An unknown error occurred",
+            );
         } finally {
             setIsLoading(false);
         }
     };
-
-    const filteredQuestions = questions.filter((question) =>
-        question.question.toLowerCase().includes(searchTerm.toLowerCase()),
-    );
 
     const toggleQuestion = (questionId: number) => {
         if (expandedQuestionId === questionId) {
@@ -245,7 +258,7 @@ export default function CategoryPage() {
     };
 
     // Quiz functions
-    const startQuiz = () => {
+    const startQuiz = async () => {
         // Validate question count
         const count = Number(selectedQuestionCount);
 
@@ -267,429 +280,186 @@ export default function CategoryPage() {
         );
 
         // Select the specified number of questions
-        const quizQuestions = allQuizQuestions.slice(0, count);
+        const selectedQuizQuestions = allQuizQuestions.slice(0, count);
 
-        setQuizState({
-            inProgress: true,
-            currentQuestionIndex: 0,
-            questions: quizQuestions,
-            userAnswers: {},
-            showResults: false,
-            selectedAnswer: null,
-            submittedAnswer: false,
-        });
+        // Format questions for QuizDisplay
+        const formattedQuizQuestions = selectedQuizQuestions.map((q) => ({
+            id: q.id.toString(),
+            question: q.question,
+            options: q.options,
+            answer: q.answer,
+            explanation: q.explanation || "No explanation provided.",
+            category: q.category,
+        }));
 
-        setActiveTab("quiz");
+        // Ensure category score exists before starting quiz
+        if (!categoryScore) {
+            try {
+                const categoryName = decodeURIComponent(params.name as string);
+                // Check if score exists
+                const { data, error } = await supabase
+                    .from("category_scores")
+                    .select("*")
+                    .eq("category_name", categoryName)
+                    .single();
+
+                if (error && error.code === "PGRST116") {
+                    // No score found, create one
+                    const { data: newScore, error: insertError } =
+                        await supabase
+                            .from("category_scores")
+                            .insert({
+                                category_name: categoryName,
+                                questions_right: 0,
+                                questions_solved: 0,
+                            })
+                            .select()
+                            .single();
+
+                    if (!insertError && newScore) {
+                        setCategoryScore(newScore);
+                    }
+                }
+            } catch (err) {
+                console.error("Error ensuring category score exists:", err);
+                // Continue anyway, the score will be created during quiz
+            }
+        }
+
+        setQuizQuestions(formattedQuizQuestions);
+        setShowQuiz(true);
         toast.success(`Starting quiz with ${count} questions`);
     };
 
-    const selectAnswer = (answer: string) => {
-        setQuizState({
-            ...quizState,
-            selectedAnswer: answer,
-        });
+    const handleQuizComplete = async () => {
+        // Ensure we update the database scores directly in addition to the callback
+        setShowQuiz(false);
+
+        // Fetch updated scores after waiting a bit for DB operations to complete
+        setTimeout(() => {
+            fetchCategoryScore();
+        }, 1000);
     };
 
-    const submitAnswer = () => {
-        if (!quizState.selectedAnswer) return;
-
-        const currentQuestion =
-            quizState.questions[quizState.currentQuestionIndex];
-
-        setQuizState({
-            ...quizState,
-            userAnswers: {
-                ...quizState.userAnswers,
-                [currentQuestion.id]: quizState.selectedAnswer,
-            },
-            submittedAnswer: true,
-        });
-    };
-
-    const moveToNextQuestion = () => {
-        // If this was the last question, show results
-        // Otherwise advance to next question
-        if (quizState.currentQuestionIndex === quizState.questions.length - 1) {
-            setQuizState((prev) => ({
-                ...prev,
-                showResults: true,
-            }));
-        } else {
-            setQuizState((prev) => ({
-                ...prev,
-                currentQuestionIndex: prev.currentQuestionIndex + 1,
-                selectedAnswer: null,
-                submittedAnswer: false,
-            }));
-        }
-    };
-
-    const resetQuiz = () => {
-        // Restart quiz with new shuffled questions
-        const quizQuestions = shuffle(
-            [...questions].filter((q) => q.options.length > 0),
+    const calculateSuccessRate = () => {
+        if (!categoryScore || categoryScore.questions_solved === 0) return 0;
+        return (
+            (categoryScore.questions_right / categoryScore.questions_solved) *
+            100
         );
-        const selectedQuestions = quizQuestions.slice(
-            0,
-            Number(selectedQuestionCount),
-        );
-
-        setQuizState({
-            inProgress: true,
-            currentQuestionIndex: 0,
-            questions: selectedQuestions,
-            userAnswers: {},
-            showResults: false,
-            selectedAnswer: null,
-            submittedAnswer: false,
-        });
     };
 
-    const calculateScore = (): ScoreResult => {
-        if (!quizState.showResults)
-            return {
-                correct: 0,
-                total: 0,
-                percentage: 0,
-            };
+    const getPerformanceLabel = (percentage: number) => {
+        if (percentage >= 90) return "Excellent";
+        if (percentage >= 75) return "Good";
+        if (percentage >= 60) return "Fair";
+        if (percentage >= 40) return "Needs improvement";
+        return "Requires practice";
+    };
 
-        let correctAnswers = 0;
-        quizState.questions.forEach((question) => {
-            const userAnswer = quizState.userAnswers[question.id];
-            if (userAnswer === question.answer) {
-                correctAnswers++;
-            }
-        });
-
-        return {
-            correct: correctAnswers,
-            total: quizState.questions.length,
-            percentage: Math.round(
-                (correctAnswers / quizState.questions.length) * 100,
-            ),
-        };
+    const getStudyRecommendation = () => {
+        const successRate = calculateSuccessRate();
+        if (successRate === 0) return "Start practicing this category";
+        if (successRate < 60) return "More practice recommended";
+        if (successRate < 80) return "Some review suggested";
+        return "You're doing great!";
     };
 
     const renderBrowseContent = () => {
-        if (filteredQuestions.length === 0) {
+        if (filteredQuestions.length === 0 && searchQuery) {
             return (
-                <div className="text-center py-8">
-                    <p className="text-gray-500">
-                        {questions.length === 0
-                            ? "No questions available in this category"
-                            : "No questions match your search"}
+                <div className="text-center py-6">
+                    <p className="text-muted-foreground">
+                        No questions found matching &quot;{searchQuery}&quot;
                     </p>
+                    <Button
+                        variant="link"
+                        onClick={() => setSearchQuery("")}
+                        className="mt-2">
+                        Clear search
+                    </Button>
                 </div>
             );
         }
 
         return (
-            <Accordion
-                type="single"
-                collapsible
-                className="w-full">
-                {filteredQuestions.map((question) => (
-                    <AccordionItem
-                        key={question.id}
-                        value={question.id.toString()}>
-                        <AccordionTrigger className="hover:bg-slate-50 px-4 py-3 rounded-lg">
-                            <div className="text-left font-medium">
-                                {question.question}
-                            </div>
-                        </AccordionTrigger>
-                        <AccordionContent className="px-4 pb-4">
-                            <div className="space-y-4 pt-2">
-                                {question.options.length > 0 ? (
-                                    <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-                                        {question.options.map(
-                                            (option, index) => (
-                                                <div
-                                                    key={index}
-                                                    className={`p-3 rounded-lg border ${
-                                                        option ===
-                                                        question.answer
-                                                            ? "border-green-500 bg-green-50"
-                                                            : "border-gray-200"
-                                                    }`}>
-                                                    {option}
-                                                </div>
-                                            ),
-                                        )}
-                                    </div>
-                                ) : (
-                                    <p className="text-amber-600">
-                                        No options available for this question
-                                    </p>
-                                )}
-
-                                {question.explanation && (
-                                    <div className="mt-4 text-sm text-gray-600 bg-slate-50 p-3 rounded-lg">
-                                        <strong>Explanation:</strong>{" "}
-                                        {question.explanation}
-                                    </div>
+            <div className="space-y-4">
+                <AnimatePresence>
+                    {filteredQuestions.map((question, index) => (
+                        <motion.div
+                            key={question.id}
+                            initial={{ opacity: 0, y: 10 }}
+                            animate={{ opacity: 1, y: 0 }}
+                            transition={{
+                                duration: 0.4,
+                                delay: index * 0.05,
+                            }}
+                            whileHover={{
+                                scale: 1.01,
+                                backgroundColor: "rgba(240, 240, 240, 0.5)",
+                            }}
+                            className="flex justify-between items-center p-3 border rounded-lg hover:bg-gray-50 cursor-pointer"
+                            onClick={() => setSelectedQuestion(question)}>
+                            <div>
+                                <p className="font-medium">
+                                    {question.question}
+                                </p>
+                                {question.category && (
+                                    <Badge
+                                        variant="outline"
+                                        className="mt-1">
+                                        {typeof question.category === "object"
+                                            ? question.category.name
+                                            : question.category}
+                                    </Badge>
                                 )}
                             </div>
-                        </AccordionContent>
-                    </AccordionItem>
-                ))}
-            </Accordion>
-        );
-    };
-
-    const renderQuizQuestion = () => {
-        if (!quizState.inProgress || quizState.questions.length === 0) {
-            return (
-                <div className="text-center py-8">
-                    <p className="text-gray-500">No quiz in progress</p>
-                </div>
-            );
-        }
-
-        if (quizState.showResults) {
-            const score = calculateScore();
-            const showConfetti = score.percentage >= 75;
-
-            return (
-                <div className="space-y-6">
-                    {showConfetti && (
-                        <Confetti
-                            width={windowSize.width}
-                            height={windowSize.height}
-                            recycle={false}
-                            numberOfPieces={200}
-                        />
-                    )}
-                    <div className="text-center py-4">
-                        <h3 className="text-2xl font-bold mb-2">
-                            Quiz Results
-                        </h3>
-                        <p className="text-lg">
-                            You scored{" "}
-                            <span className="font-bold">
-                                {score.correct} out of {score.total}
-                            </span>{" "}
-                            ({score.percentage}%)
-                        </p>
-                        <Progress
-                            value={score.percentage}
-                            className={`mt-4 h-3 ${
-                                score.percentage > 70
-                                    ? "bg-green-100"
-                                    : score.percentage > 40
-                                      ? "bg-yellow-100"
-                                      : "bg-red-100"
-                            }`}
-                        />
-                        {showConfetti && (
-                            <p className="text-green-600 font-medium mt-2">
-                                Great job! You earned a score over 75%!
-                            </p>
-                        )}
-                    </div>
-
-                    <div className="space-y-4">
-                        {quizState.questions.map((question, index) => {
-                            const userAnswer =
-                                quizState.userAnswers[question.id];
-                            const isCorrect = userAnswer === question.answer;
-
-                            return (
-                                <Card
-                                    key={question.id}
-                                    className={
-                                        isCorrect
-                                            ? "border-green-200"
-                                            : "border-red-200"
-                                    }>
-                                    <CardHeader className="pb-2">
-                                        <div className="flex justify-between items-start">
-                                            <div className="flex items-center gap-2">
-                                                <div className="flex-shrink-0 mt-0.5">
-                                                    {isCorrect ? (
-                                                        <Check className="h-5 w-5 text-green-500" />
-                                                    ) : (
-                                                        <X className="h-5 w-5 text-red-500" />
-                                                    )}
-                                                </div>
-                                                <div>
-                                                    <p className="font-medium">
-                                                        {question.question}
-                                                    </p>
-                                                </div>
-                                            </div>
-                                            <Badge
-                                                variant={
-                                                    isCorrect
-                                                        ? "outline"
-                                                        : "destructive"
-                                                }>
-                                                {isCorrect
-                                                    ? "Correct"
-                                                    : "Incorrect"}
-                                            </Badge>
-                                        </div>
-                                    </CardHeader>
-                                    <CardContent className="pt-0">
-                                        <div className="grid grid-cols-1 md:grid-cols-2 gap-2 mt-2">
-                                            {question.options.map((option) => (
-                                                <div
-                                                    key={option}
-                                                    className={`p-3 rounded-lg border ${
-                                                        option ===
-                                                        question.answer
-                                                            ? "border-green-500 bg-green-50"
-                                                            : option ===
-                                                                    userAnswer &&
-                                                                option !==
-                                                                    question.answer
-                                                              ? "border-red-500 bg-red-50"
-                                                              : "border-gray-200"
-                                                    }`}>
-                                                    {option}
-                                                </div>
-                                            ))}
-                                        </div>
-
-                                        {question.explanation && (
-                                            <div className="mt-4 text-sm text-gray-600 bg-slate-50 p-3 rounded-lg">
-                                                <strong>Explanation:</strong>{" "}
-                                                {question.explanation}
-                                            </div>
-                                        )}
-                                    </CardContent>
-                                </Card>
-                            );
-                        })}
-                    </div>
-
-                    <div className="flex justify-center pt-4">
-                        <Button
-                            onClick={resetQuiz}
-                            className="flex items-center gap-2">
-                            <RefreshCw className="h-4 w-4" />
-                            <span>Take Quiz Again</span>
-                        </Button>
-                    </div>
-                </div>
-            );
-        }
-
-        const currentQuestion =
-            quizState.questions[quizState.currentQuestionIndex];
-        const userAnswer = quizState.userAnswers[currentQuestion.id];
-        const isCorrect =
-            quizState.submittedAnswer &&
-            quizState.selectedAnswer === currentQuestion.answer;
-        const isIncorrect =
-            quizState.submittedAnswer &&
-            quizState.selectedAnswer !== currentQuestion.answer;
-
-        return (
-            <div className="space-y-6">
-                <div className="flex justify-between items-center">
-                    <Badge variant="outline">
-                        Question {quizState.currentQuestionIndex + 1} of{" "}
-                        {quizState.questions.length}
-                    </Badge>
-                    <Progress
-                        value={
-                            (quizState.currentQuestionIndex /
-                                quizState.questions.length) *
-                            100
-                        }
-                        className="w-full max-w-[200px] h-2"
-                    />
-                </div>
-
-                <div>
-                    <h3 className="text-xl font-medium mb-6">
-                        {currentQuestion.question}
-                    </h3>
-
-                    <div className="grid grid-cols-1 gap-3">
-                        {currentQuestion.options.map((option) => {
-                            const isSelected =
-                                quizState.selectedAnswer === option;
-                            const isCorrectOption =
-                                option === currentQuestion.answer;
-
-                            let buttonStyle = "";
-
-                            if (quizState.submittedAnswer) {
-                                if (isCorrectOption) {
-                                    buttonStyle =
-                                        "border-green-500 bg-green-50 text-green-700";
-                                } else if (isSelected && !isCorrectOption) {
-                                    buttonStyle =
-                                        "border-red-500 bg-red-50 text-red-700";
-                                }
-                            }
-
-                            return (
-                                <Button
-                                    key={option}
-                                    variant={
-                                        isSelected && !quizState.submittedAnswer
-                                            ? "default"
-                                            : "outline"
-                                    }
-                                    className={`justify-start p-4 h-auto text-base font-normal ${buttonStyle} ${
-                                        !isSelected && quizState.submittedAnswer
-                                            ? "opacity-50"
-                                            : ""
-                                    }`}
-                                    onClick={() =>
-                                        !quizState.submittedAnswer &&
-                                        selectAnswer(option)
-                                    }
-                                    disabled={quizState.submittedAnswer}>
-                                    {option}
-                                    {quizState.submittedAnswer &&
-                                        isCorrectOption && (
-                                            <Check className="h-5 w-5 ml-2 text-green-500" />
-                                        )}
-                                    {quizState.submittedAnswer &&
-                                        isSelected &&
-                                        !isCorrectOption && (
-                                            <X className="h-5 w-5 ml-2 text-red-500" />
-                                        )}
-                                </Button>
-                            );
-                        })}
-                    </div>
-
-                    <div className="mt-6 flex justify-center">
-                        {!quizState.submittedAnswer ? (
-                            <Button
-                                onClick={submitAnswer}
-                                disabled={!quizState.selectedAnswer}
-                                className="w-full max-w-[200px]">
-                                Submit Answer
-                            </Button>
-                        ) : (
-                            <div className="space-y-4 w-full">
-                                {currentQuestion.explanation && (
-                                    <div className="text-sm bg-slate-50 p-4 rounded-lg border border-slate-200">
-                                        <strong>Explanation:</strong>{" "}
-                                        {currentQuestion.explanation}
-                                    </div>
-                                )}
-
-                                <Button
-                                    onClick={moveToNextQuestion}
-                                    className="w-full max-w-[200px]">
-                                    {quizState.currentQuestionIndex ===
-                                    quizState.questions.length - 1
-                                        ? "See Results"
-                                        : "Next Question"}
-                                </Button>
-                            </div>
-                        )}
-                    </div>
-                </div>
+                            <ChevronRight className="h-5 w-5 text-gray-400" />
+                        </motion.div>
+                    ))}
+                </AnimatePresence>
             </div>
         );
     };
+
+    if (showQuiz) {
+        return (
+            <div className="container mx-auto py-8 space-y-6">
+                <motion.div
+                    initial={{ opacity: 0, y: -10 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ duration: 0.5 }}
+                    className="flex justify-between items-center mb-6">
+                    <h1 className="text-3xl font-bold">
+                        {category?.name} - Quiz
+                    </h1>
+                    <motion.div
+                        whileHover={{ scale: 1.05 }}
+                        whileTap={{ scale: 0.95 }}>
+                        <Button onClick={() => setShowQuiz(false)}>
+                            Back to Category
+                        </Button>
+                    </motion.div>
+                </motion.div>
+                <QuizDisplay
+                    questions={quizQuestions as any}
+                    onComplete={(score, total) => {
+                        // Update local scores state for immediate UI feedback
+                        const updatedScore = {
+                            id: categoryScore?.id || 0,
+                            category_name: category?.name || "",
+                            questions_right:
+                                (categoryScore?.questions_right || 0) + score,
+                            questions_solved:
+                                (categoryScore?.questions_solved || 0) + total,
+                        };
+                        setCategoryScore(updatedScore);
+                        handleQuizComplete();
+                    }}
+                />
+            </div>
+        );
+    }
 
     const renderContent = () => {
         if (isLoading) {
@@ -753,164 +523,435 @@ export default function CategoryPage() {
             <div className="space-y-6">
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                     {/* Quiz Configuration Card */}
-                    <Card className="h-full">
-                        <CardHeader>
-                            <CardTitle className="flex items-center gap-2">
-                                <Brain className="h-5 w-5" />
-                                Quiz Mode
-                            </CardTitle>
-                            <CardDescription>
-                                Test your knowledge with questions from this
-                                category
-                            </CardDescription>
-                        </CardHeader>
-                        <CardContent className="space-y-4">
-                            {questions.length > 0 ? (
-                                <div className="space-y-4">
-                                    <p>
-                                        This category has {questions.length}{" "}
-                                        questions available.
-                                    </p>
-                                    <div className="flex flex-col space-y-3">
-                                        <label
-                                            htmlFor="questionCount"
-                                            className="text-sm font-medium">
-                                            Number of questions for quiz:
-                                        </label>
-                                        <div className="flex items-center space-x-2">
-                                            <Input
-                                                id="questionCount"
-                                                type="number"
-                                                value={selectedQuestionCount}
-                                                onChange={(e) => {
-                                                    const value =
-                                                        e.target.value;
-                                                    setSelectedQuestionCount(
-                                                        value === ""
-                                                            ? ""
-                                                            : Number(value),
-                                                    );
-                                                }}
-                                                className="w-24"
-                                            />
-                                            <span className="text-sm text-gray-500">
-                                                of {questions.length} total
-                                            </span>
+                    <motion.div
+                        initial={{ opacity: 0, x: -20 }}
+                        animate={{ opacity: 1, x: 0 }}
+                        transition={{ duration: 0.6, delay: 0.2 }}>
+                        <Card className="h-full">
+                            <CardHeader>
+                                <CardTitle className="flex items-center gap-2">
+                                    <Brain className="h-5 w-5" />
+                                    Quiz
+                                </CardTitle>
+                                <CardDescription>
+                                    Test your knowledge with questions from this
+                                    category
+                                </CardDescription>
+                            </CardHeader>
+                            <CardContent className="space-y-4">
+                                {questions.length > 0 ? (
+                                    <motion.div
+                                        className="space-y-4"
+                                        initial={{ opacity: 0 }}
+                                        animate={{ opacity: 1 }}
+                                        transition={{
+                                            duration: 0.4,
+                                            delay: 0.4,
+                                        }}>
+                                        <p>
+                                            This category has {questions.length}{" "}
+                                            questions available.
+                                        </p>
+
+                                        {/* Category performance stats */}
+                                        {categoryScore &&
+                                            categoryScore.questions_solved >
+                                                0 && (
+                                                <motion.div
+                                                    className="border rounded-lg p-3 bg-slate-50"
+                                                    initial={{
+                                                        opacity: 0,
+                                                        y: 10,
+                                                    }}
+                                                    animate={{
+                                                        opacity: 1,
+                                                        y: 0,
+                                                    }}
+                                                    transition={{
+                                                        duration: 0.5,
+                                                        delay: 0.5,
+                                                    }}>
+                                                    <h3 className="text-sm font-medium mb-2">
+                                                        Performance Stats
+                                                    </h3>
+                                                    <div className="grid grid-cols-2 gap-2">
+                                                        <div>
+                                                            <p className="text-xs text-gray-500">
+                                                                Correct
+                                                            </p>
+                                                            <p className="font-medium">
+                                                                {
+                                                                    categoryScore.questions_right
+                                                                }{" "}
+                                                                /{" "}
+                                                                {
+                                                                    categoryScore.questions_solved
+                                                                }
+                                                            </p>
+                                                        </div>
+                                                        <div>
+                                                            <p className="text-xs text-gray-500">
+                                                                Success Rate
+                                                            </p>
+                                                            <p className="font-medium">
+                                                                {calculateSuccessRate().toFixed(
+                                                                    1,
+                                                                )}
+                                                                %
+                                                            </p>
+                                                        </div>
+                                                    </div>
+                                                </motion.div>
+                                            )}
+
+                                        <div className="flex flex-col space-y-3">
+                                            <label
+                                                htmlFor="questionCount"
+                                                className="text-sm font-medium">
+                                                Number of questions for quiz:
+                                            </label>
+                                            <div className="flex items-center space-x-2">
+                                                <Input
+                                                    id="questionCount"
+                                                    type="number"
+                                                    value={
+                                                        selectedQuestionCount
+                                                    }
+                                                    onChange={(e) => {
+                                                        const value =
+                                                            e.target.value;
+                                                        setSelectedQuestionCount(
+                                                            value === ""
+                                                                ? ""
+                                                                : Math.max(
+                                                                      1,
+                                                                      Math.min(
+                                                                          parseInt(
+                                                                              value,
+                                                                          ) ||
+                                                                              1,
+                                                                          questions.length,
+                                                                      ),
+                                                                  ),
+                                                        );
+                                                    }}
+                                                    min={1}
+                                                    max={questions.length}
+                                                    className="w-24"
+                                                />
+                                                <span className="text-sm text-muted-foreground">
+                                                    of {questions.length}
+                                                </span>
+                                            </div>
                                         </div>
-                                        <p className="text-xs text-gray-500">
-                                            Enter how many questions you want in
-                                            your quiz.
+
+                                        <motion.div
+                                            whileHover={{ scale: 1.02 }}
+                                            whileTap={{ scale: 0.98 }}>
+                                            <Button
+                                                onClick={startQuiz}
+                                                className="w-full">
+                                                Start Quiz
+                                            </Button>
+                                        </motion.div>
+                                    </motion.div>
+                                ) : (
+                                    <div className="text-center py-4">
+                                        <p className="text-muted-foreground">
+                                            No questions available for this
+                                            category.
                                         </p>
                                     </div>
-                                    <Button
-                                        onClick={startQuiz}
-                                        className="w-full flex items-center gap-2">
-                                        <PlayCircle className="h-4 w-4" />
-                                        <span>Start Quiz</span>
-                                    </Button>
-                                </div>
-                            ) : (
-                                <div className="text-center py-4">
-                                    <p className="text-gray-500">
-                                        No questions available in this category
-                                    </p>
-                                </div>
-                            )}
-                        </CardContent>
-                    </Card>
+                                )}
+                            </CardContent>
+                        </Card>
+                    </motion.div>
 
-                    {/* Search Card */}
-                    <Card className="h-full">
-                        <CardHeader>
-                            <CardTitle className="flex items-center gap-2">
-                                <Search className="h-5 w-5" />
-                                Find Questions
-                            </CardTitle>
-                            <CardDescription>
-                                Search through {questions.length} questions in
-                                this category
-                            </CardDescription>
-                        </CardHeader>
-                        <CardContent>
-                            <div className="mb-4">
-                                <div className="relative">
-                                    <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-gray-400" />
+                    {/* Category Info Card */}
+                    <motion.div
+                        initial={{ opacity: 0, x: 20 }}
+                        animate={{ opacity: 1, x: 0 }}
+                        transition={{ duration: 0.6, delay: 0.3 }}>
+                        <Card>
+                            <CardHeader>
+                                <CardTitle className="flex items-center gap-2">
+                                    <Tag className="h-5 w-5" />
+                                    Category: {category.name}
+                                </CardTitle>
+                                <CardDescription>
+                                    Browse and search questions in this category
+                                </CardDescription>
+                            </CardHeader>
+                            <CardContent className="space-y-4">
+                                {categoryScore &&
+                                categoryScore.questions_solved > 0 ? (
+                                    <motion.div
+                                        className="border rounded-lg p-3 bg-slate-50"
+                                        initial={{ opacity: 0, y: 10 }}
+                                        animate={{ opacity: 1, y: 0 }}
+                                        transition={{
+                                            duration: 0.5,
+                                            delay: 0.3,
+                                        }}>
+                                        <div className="flex justify-between items-center">
+                                            <h3 className="text-sm font-medium">
+                                                Study Recommendation
+                                            </h3>
+                                            <Badge
+                                                variant={
+                                                    calculateSuccessRate() >= 75
+                                                        ? "secondary"
+                                                        : "outline"
+                                                }
+                                                className={
+                                                    calculateSuccessRate() >= 75
+                                                        ? "bg-green-100 text-green-800"
+                                                        : ""
+                                                }>
+                                                {getPerformanceLabel(
+                                                    calculateSuccessRate(),
+                                                )}
+                                            </Badge>
+                                        </div>
+                                        <p className="text-sm mt-2">
+                                            {getStudyRecommendation()}
+                                        </p>
+                                    </motion.div>
+                                ) : (
+                                    <motion.div
+                                        className="border rounded-lg p-3 bg-slate-50"
+                                        initial={{ opacity: 0, y: 10 }}
+                                        animate={{ opacity: 1, y: 0 }}
+                                        transition={{
+                                            duration: 0.5,
+                                            delay: 0.3,
+                                        }}>
+                                        <p className="text-sm">
+                                            No quiz attempts yet. Start a quiz
+                                            to track your progress!
+                                        </p>
+                                    </motion.div>
+                                )}
+
+                                <div className="flex items-center space-x-2">
+                                    <Search className="w-4 h-4 text-muted-foreground" />
                                     <Input
-                                        type="search"
                                         placeholder="Search questions..."
-                                        value={searchTerm}
+                                        value={searchQuery}
                                         onChange={(e) =>
-                                            setSearchTerm(e.target.value)
+                                            setSearchQuery(e.target.value)
                                         }
-                                        className="pl-10"
+                                        className="flex-1"
                                     />
                                 </div>
-                            </div>
-
-                            {searchTerm && (
-                                <div className="text-sm text-gray-500 mb-2">
-                                    {filteredQuestions.length}{" "}
-                                    {filteredQuestions.length === 1
-                                        ? "question"
-                                        : "questions"}{" "}
-                                    found
+                                <div>
+                                    <div className="grid grid-cols-2 gap-2">
+                                        <div className="space-y-1">
+                                            <p className="text-sm text-muted-foreground">
+                                                Total Questions
+                                            </p>
+                                            <p className="text-2xl font-bold">
+                                                {questions.length}
+                                            </p>
+                                        </div>
+                                        {questions.length > 0 && (
+                                            <div className="space-y-1">
+                                                <p className="text-sm text-muted-foreground">
+                                                    With Multiple Choice
+                                                </p>
+                                                <p className="text-2xl font-bold">
+                                                    {
+                                                        questions.filter(
+                                                            (q) =>
+                                                                q.options &&
+                                                                q.options
+                                                                    .length > 0,
+                                                        ).length
+                                                    }
+                                                </p>
+                                            </div>
+                                        )}
+                                    </div>
                                 </div>
-                            )}
-                        </CardContent>
-                    </Card>
+                            </CardContent>
+                        </Card>
+                    </motion.div>
                 </div>
 
-                {/* Questions List Card */}
-                {!quizState.inProgress ? (
+                {/* Questions List - Directly displayed instead of in tabs */}
+                <div className="mt-6">
                     <Card>
                         <CardHeader>
-                            <CardTitle>All Questions</CardTitle>
+                            <CardTitle>Browse Questions</CardTitle>
                             <CardDescription>
-                                Browse all questions in the {category.name}{" "}
-                                category
+                                Explore all questions in this category
                             </CardDescription>
                         </CardHeader>
                         <CardContent>{renderBrowseContent()}</CardContent>
                     </Card>
-                ) : (
-                    <Card>
-                        <CardHeader>
-                            <CardTitle>Quiz in Progress</CardTitle>
-                            <CardDescription>
-                                {quizState.showResults
-                                    ? "Review your quiz results"
-                                    : `Question ${quizState.currentQuestionIndex + 1} of ${quizState.questions.length}`}
-                            </CardDescription>
-                        </CardHeader>
-                        <CardContent>{renderQuizQuestion()}</CardContent>
-                    </Card>
-                )}
+                </div>
             </div>
         );
     };
 
     return (
-        <div className="container mx-auto py-8">
-            <div className="mb-4">
-                <Button
-                    variant="outline"
-                    onClick={() => router.push("/categories")}
-                    className="flex items-center gap-2">
-                    <ArrowLeft className="h-4 w-4" /> Back to Categories
-                </Button>
-            </div>
-
-            <div className="mb-6">
-                <h1 className="text-3xl font-bold flex items-center gap-2">
-                    <Tag className="h-6 w-6" />
-                    {category?.name || "Category"}
-                </h1>
-                <p className="text-gray-500 mt-1">
-                    {questions.length} questions available in this category
-                </p>
-            </div>
+        <div className="container py-6 space-y-8">
+            <motion.div
+                initial={{ opacity: 0, y: -20 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ duration: 0.6 }}
+                className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                    <Button
+                        variant="ghost"
+                        size="icon"
+                        onClick={() => router.push("/categories")}
+                        title="Back to Categories">
+                        <ArrowLeft className="h-4 w-4" />
+                    </Button>
+                    <h1 className="text-2xl font-bold">
+                        {isLoading
+                            ? "Loading..."
+                            : category
+                              ? category.name
+                              : "Category"}
+                    </h1>
+                </div>
+                {fetchingScore ? (
+                    <div className="flex items-center gap-2">
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                        <span className="text-sm">Loading stats...</span>
+                    </div>
+                ) : categoryScore && categoryScore.questions_solved > 0 ? (
+                    <div className="flex items-center gap-4">
+                        <div className="text-right">
+                            <p className="text-sm font-medium">
+                                Score: {calculateSuccessRate().toFixed(1)}%
+                            </p>
+                            <p className="text-xs text-gray-500">
+                                {categoryScore.questions_right} of{" "}
+                                {categoryScore.questions_solved} correct
+                            </p>
+                        </div>
+                        <Badge
+                            variant={
+                                calculateSuccessRate() >= 75
+                                    ? "secondary"
+                                    : "outline"
+                            }
+                            className={
+                                calculateSuccessRate() >= 75
+                                    ? "bg-green-100 text-green-800"
+                                    : ""
+                            }>
+                            {getPerformanceLabel(calculateSuccessRate())}
+                        </Badge>
+                    </div>
+                ) : null}
+            </motion.div>
 
             {renderContent()}
+
+            {/* Question Details Dialog */}
+            <Dialog
+                open={!!selectedQuestion}
+                onOpenChange={(open) => !open && setSelectedQuestion(null)}>
+                <DialogContent className="sm:max-w-md">
+                    <DialogHeader>
+                        <DialogTitle>Question Details</DialogTitle>
+                    </DialogHeader>
+
+                    {selectedQuestion && (
+                        <div className="space-y-4">
+                            <div>
+                                <h3 className="font-medium text-sm text-gray-500">
+                                    Question:
+                                </h3>
+                                <p className="mt-1">
+                                    {selectedQuestion.question}
+                                </p>
+                            </div>
+
+                            <div>
+                                <h3 className="font-medium text-sm text-gray-500">
+                                    Options:
+                                </h3>
+                                <div className="mt-2 space-y-2">
+                                    {Array.isArray(selectedQuestion.options) &&
+                                        selectedQuestion.options.map(
+                                            (option: string, i: number) => (
+                                                <div
+                                                    key={i}
+                                                    className={`p-2 rounded-md ${option === selectedQuestion.answer ? "bg-green-50 border border-green-200" : "bg-gray-50"}`}>
+                                                    <div className="flex items-start">
+                                                        <div
+                                                            className={`w-6 h-6 rounded-full flex items-center justify-center text-xs mr-2 ${option === selectedQuestion.answer ? "bg-green-100 text-green-800" : "bg-gray-200"}`}>
+                                                            {String.fromCharCode(
+                                                                65 + i,
+                                                            )}
+                                                        </div>
+                                                        <div className="flex-1">
+                                                            <p
+                                                                className={
+                                                                    option ===
+                                                                    selectedQuestion.answer
+                                                                        ? "font-medium text-green-800"
+                                                                        : ""
+                                                                }>
+                                                                {option}
+                                                            </p>
+                                                            {option ===
+                                                                selectedQuestion.answer && (
+                                                                <p className="text-xs text-green-600 mt-1">
+                                                                    Correct
+                                                                    Answer
+                                                                </p>
+                                                            )}
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                            ),
+                                        )}
+                                </div>
+                            </div>
+
+                            {selectedQuestion.explanation && (
+                                <div>
+                                    <h3 className="font-medium text-sm text-gray-500">
+                                        Explanation:
+                                    </h3>
+                                    <p className="mt-1 text-sm">
+                                        {selectedQuestion.explanation}
+                                    </p>
+                                </div>
+                            )}
+
+                            {selectedQuestion.category && (
+                                <div>
+                                    <h3 className="font-medium text-sm text-gray-500">
+                                        Category:
+                                    </h3>
+                                    <Badge
+                                        variant="outline"
+                                        className="mt-1">
+                                        {typeof selectedQuestion.category ===
+                                            "object" &&
+                                        selectedQuestion.category
+                                            ? selectedQuestion.category.name
+                                            : selectedQuestion.category}
+                                    </Badge>
+                                </div>
+                            )}
+                        </div>
+                    )}
+
+                    <DialogFooter>
+                        <Button onClick={() => setSelectedQuestion(null)}>
+                            Close
+                        </Button>
+                    </DialogFooter>
+                </DialogContent>
+            </Dialog>
         </div>
     );
 }
