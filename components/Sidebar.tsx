@@ -3,8 +3,10 @@
 import { useEffect, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import Link from "next/link";
+import Image from "next/image";
 import supabase from "@/lib/supabase";
-import { PlusSquare, Tag } from "lucide-react";
+
+import { PlusSquare, BarChart2, Tag } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { StudySet } from "@/lib/supabase";
@@ -98,7 +100,18 @@ export default function Sidebar() {
     return (
         <div className="w-64 bg-slate-100 dark:bg-slate-900 h-full flex flex-col border-r">
             <div className="p-4 border-b">
-                <h2 className="text-xl font-bold">Study Sets</h2>
+                <Link
+                    href="/"
+                    className="flex items-center gap-3 cursor-pointer">
+                    <Image
+                        src="/study-sets-logo.png"
+                        alt="Study Sets Logo"
+                        width={32}
+                        height={32}
+                        className="rounded-md"
+                    />
+                    <h2 className="text-xl font-bold">Study Sets</h2>
+                </Link>
             </div>
             
             {/* Categories Link */}
@@ -155,13 +168,24 @@ export default function Sidebar() {
                 )}
             </div>
             <div className="p-4 border-t mt-auto">
-                <Button
-                    onClick={createNewStudySet}
-                    className="w-full flex items-center justify-center gap-2"
-                    variant="outline">
-                    <PlusSquare className="h-5 w-5" />
-                    <span>Create New Set</span>
-                </Button>
+                <div className="space-y-2">
+                    <Link href="/stats">
+                        <Button
+                            className="w-full flex items-center justify-center gap-2"
+                            variant="secondary">
+                            <BarChart2 className="h-5 w-5" />
+                            <span>View Stats</span>
+                        </Button>
+                    </Link>
+
+                    <Button
+                        onClick={createNewStudySet}
+                        className="w-full flex items-center justify-center gap-2"
+                        variant="outline">
+                        <PlusSquare className="h-5 w-5" />
+                        <span>Create New Set</span>
+                    </Button>
+                </div>
             </div>
         </div>
     );
