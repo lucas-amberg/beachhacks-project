@@ -5,7 +5,7 @@ import { usePathname } from "next/navigation";
 
 export default function TopNavbar() {
     const pathname = usePathname();
-    
+
     return (
         <div className="w-full bg-white dark:bg-slate-900 border-b">
             <div className="container mx-auto px-4 py-3">
@@ -15,4 +15,4 @@ export default function TopNavbar() {
             </div>
         </div>
     );
-} 
+}

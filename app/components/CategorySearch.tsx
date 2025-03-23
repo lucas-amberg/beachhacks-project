@@ -40,10 +40,11 @@ export default function CategorySearch() {
     const fetchCategories = async () => {
         try {
             // Get all categories
-            const { data: categoriesData, error: categoriesError } = await supabase
-                .from("categories")
-                .select("id, name")
-                .order("name");
+            const { data: categoriesData, error: categoriesError } =
+                await supabase
+                    .from("categories")
+                    .select("id, name")
+                    .order("name");
 
             if (categoriesError) {
                 console.error("Error fetching categories:", categoriesError);
@@ -59,7 +60,10 @@ export default function CategorySearch() {
             const { data: counts, error: countsError } = await supabase
                 .from("quiz_questions")
                 .select("category")
-                .in("category", categoriesData.map(c => c.name));
+                .in(
+                    "category",
+                    categoriesData.map((c) => c.name),
+                );
 
             if (countsError) {
                 console.error("Error fetching question counts:", countsError);
@@ -67,16 +71,17 @@ export default function CategorySearch() {
             }
 
             // Count questions per category
-            const questionCounts = counts?.reduce<Record<string, number>>((acc, curr) => {
-                acc[curr.category] = (acc[curr.category] || 0) + 1;
-                return acc;
-            }, {}) || {};
+            const questionCounts =
+                counts?.reduce<Record<string, number>>((acc, curr) => {
+                    acc[curr.category] = (acc[curr.category] || 0) + 1;
+                    return acc;
+                }, {}) || {};
 
             // Combine categories with their counts
-            const categoriesWithCounts = categoriesData.map(category => ({
+            const categoriesWithCounts = categoriesData.map((category) => ({
                 id: category.id,
                 name: category.name,
-                question_count: questionCounts[category.name] || 0
+                question_count: questionCounts[category.name] || 0,
             }));
 
             setCategories(categoriesWithCounts);
@@ -86,25 +91,31 @@ export default function CategorySearch() {
     };
 
     // Filter categories based on input
-    const filteredCategories = inputValue === "" 
-        ? categories 
-        : categories.filter((category) =>
-            category.name.toLowerCase().includes(inputValue.toLowerCase())
-        );
+    const filteredCategories =
+        inputValue === ""
+            ? categories
+            : categories.filter((category) =>
+                  category.name
+                      .toLowerCase()
+                      .includes(inputValue.toLowerCase()),
+              );
 
     return (
-        <Popover open={open} onOpenChange={setOpen}>
+        <Popover
+            open={open}
+            onOpenChange={setOpen}>
             <PopoverTrigger asChild>
                 <Button
                     variant="outline"
                     role="combobox"
                     aria-expanded={open}
-                    className="w-full justify-between md:w-[300px] lg:w-[400px]"
-                >
+                    className="w-full justify-between md:w-[300px] lg:w-[400px]">
                     <div className="flex items-center gap-2">
                         <Search className="h-4 w-4" />
                         {selectedValue
-                            ? categories.find((category) => category.name === selectedValue)?.name
+                            ? categories.find(
+                                  (category) => category.name === selectedValue,
+                              )?.name
                             : "Search categories..."}
                     </div>
                     <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
@@ -112,8 +123,8 @@ export default function CategorySearch() {
             </PopoverTrigger>
             <PopoverContent className="w-full md:w-[300px] lg:w-[400px] p-0">
                 <Command>
-                    <CommandInput 
-                        placeholder="Search categories..." 
+                    <CommandInput
+                        placeholder="Search categories..."
                         value={inputValue}
                         onValueChange={setInputValue}
                     />
@@ -125,16 +136,23 @@ export default function CategorySearch() {
                                     key={category.id}
                                     value={category.name}
                                     onSelect={(currentValue) => {
-                                        setSelectedValue(currentValue === selectedValue ? "" : currentValue);
+                                        setSelectedValue(
+                                            currentValue === selectedValue
+                                                ? ""
+                                                : currentValue,
+                                        );
                                         setInputValue("");
                                         setOpen(false);
-                                        router.push(`/categories/${category.id}`);
-                                    }}
-                                >
+                                        router.push(
+                                            `/categories/${category.id}`,
+                                        );
+                                    }}>
                                     <Check
                                         className={cn(
                                             "mr-2 h-4 w-4",
-                                            selectedValue === category.name ? "opacity-100" : "opacity-0"
+                                            selectedValue === category.name
+                                                ? "opacity-100"
+                                                : "opacity-0",
                                         )}
                                     />
                                     <div className="flex items-center justify-between w-full">
@@ -151,4 +169,4 @@ export default function CategorySearch() {
             </PopoverContent>
         </Popover>
     );
-} 
+}
