@@ -1,6 +1,20 @@
-# BeachHacks Project
+# Study Sets - BeachHacks 8.0
 
 A Next.js application for quiz generation and subject management using AI.
+
+## Authors
+
+[Lucas Amberg](https://github.com/lucas-amberg) and [Tylor Franca](https://github.com/tylorrfranca)
+
+## Results
+
+**Winner!**
+
+Study Sets took home 1st place in the Beginner Track and 2nd place in the DAIN AI track.
+
+Thank you so much for all organizers for setting up and carrying out this event, we really appreciate all the effort, mentorship, and support from the organizers and other competitors.
+
+You can view our submission on Devpost [here](https://devpost.com/software/study-sets?_gl=1*x3z1sg*_gcl_au*MTk1NDU3NzEzLjE3NDI2NjE3MzI.*_ga*MjAzNzE4NTg5LjE3NDI2NjE3MzI.*_ga_0YHJK3Y10M*MTc0MzcyNDg1Ny44LjEuMTc0MzcyNDg3OS4wLjAuMA..)!
 
 ## Description
 
